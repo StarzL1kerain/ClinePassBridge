@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "plugins": [
+    {
+      "id": "clinepassbridge",
+      "name": "ClinePassBridge",
+      "description": "Cline Pass adapter for CLIProxyAPI with model aliases, streaming and actual provider logs.",
+      "author": "xiao-qiu-qiu",
+      "version": "0.1.0",
+      "repository": "https://github.com/xiao-qiu-qiu/ClinePassBridge",
+      "homepage": "https://github.com/xiao-qiu-qiu/ClinePassBridge",
+      "license": "MIT",
+      "tags": ["cline-pass", "provider", "streaming"],
+      "install": {"type": "github-release"}
+    }
+  ]
+}
