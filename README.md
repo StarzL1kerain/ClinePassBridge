@@ -22,7 +22,7 @@ plugins:
     - https://raw.githubusercontent.com/xiao-qiu-qiu/ClinePassBridge/main/marketplace/registry.json
 ```
 
-CPA 的内置官方市场始终保留；`store-sources` 添加一个额外来源。发布 `v0.1.0` GitHub Release 后，在 CPA 的插件市场找到 **ClinePassBridge** 并安装。市场读取 `marketplace/registry.json`，再从本仓库 Release 下载与宿主平台匹配的 ZIP 和 `checksums.txt`，核验 ZIP 的 SHA-256。各 ZIP 根目录分别是 `clinepassbridge.so`（Linux）、`clinepassbridge.dylib`（macOS）或 `clinepassbridge.dll`（Windows）；安装后的文件名带版本，但插件 ID 始终是 `clinepassbridge`。
+CPA 的内置官方市场始终保留；`store-sources` 添加一个额外来源。安装 `v0.1.1` 或更高版本时，在 CPA 的插件市场找到 **ClinePassBridge** 并安装。市场读取 `marketplace/registry.json`，再从本仓库 Release 下载与宿主平台匹配的 ZIP 和 `checksums.txt`，核验 ZIP 的 SHA-256。各 ZIP 根目录分别是 `clinepassbridge.so`（Linux）、`clinepassbridge.dylib`（macOS）或 `clinepassbridge.dll`（Windows）；安装后的文件名带版本，但插件 ID 始终是 `clinepassbridge`。
 
 市场安装会写入插件配置。插件加载后打开：
 

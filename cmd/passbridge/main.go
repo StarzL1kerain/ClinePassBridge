@@ -210,6 +210,7 @@ func cliproxyPluginShutdown() {
 	libraryMu.Lock()
 	defer libraryMu.Unlock()
 	defer func() {
+		service = nil
 		hostMu.Lock()
 		C.store_host_api(nil)
 		hostMu.Unlock()
@@ -217,7 +218,6 @@ func cliproxyPluginShutdown() {
 	}()
 	if service != nil {
 		_, _ = service.Handle("plugin.shutdown", nil)
-		service = nil
 	}
 }
 

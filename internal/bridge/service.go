@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -176,6 +177,7 @@ func (s *Service) begin() error {
 
 // Re-save this provider's auth records so CPA's watcher refreshes model registrations.
 func (s *Service) refreshRegistrations() error {
+	revision := sha256.Sum256(jsonBytes(s.config().Models))
 	s.mu.RLock()
 	credentials := make([]Credential, 0, len(s.creds))
 	for _, c := range s.creds {
@@ -183,6 +185,9 @@ func (s *Service) refreshRegistrations() error {
 	}
 	s.mu.RUnlock()
 	for _, c := range credentials {
+		// CPA skips unchanged files. A model revision makes watcher refreshes reliable.
+		c.ModelRevision = hex.EncodeToString(revision[:])
+		c.RequestScopedErrors = requestErrorRules()
 		if e := s.call("host.auth.save", map[string]any{"name": c.ID + ".json", "json": json.RawMessage(jsonBytes(c))}, nil); e != nil {
 			return e
 		}

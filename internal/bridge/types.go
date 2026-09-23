@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-const Version = "0.1.0"
+const Version = "0.1.1"
 const Provider = "cline-pass"
 const PluginID = "clinepassbridge"
 
@@ -62,6 +62,7 @@ type Credential struct {
 	Disabled            bool               `json:"disabled"`
 	ProxyURL            string             `json:"proxy_url,omitempty"`
 	RequestScopedErrors []RequestErrorRule `json:"request_scoped_errors"`
+	ModelRevision       string             `json:"model_revision,omitempty"`
 }
 type RequestErrorRule struct {
 	Status int      `json:"status"`
