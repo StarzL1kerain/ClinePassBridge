@@ -279,11 +279,7 @@ func (s *Service) consumeSSE(us upstreamStream, model string, entry *LogEntry, a
 				if !cp.allFinished() {
 					return fail(502, "upstream stream ended without finish_reason")
 				}
-				if emit != nil {
-					if err := emit([]byte("data: [DONE]\n\n")); err != nil {
-						return err
-					}
-				}
+				// CPA owns the downstream SSE envelope and terminal marker.
 				return errStreamDone
 			}
 			j, err := decodeObject(payload)
@@ -300,7 +296,7 @@ func (s *Service) consumeSSE(us upstreamStream, model string, entry *LogEntry, a
 			}
 			if emit != nil {
 				j["model"] = model
-				return emit(append(append([]byte("data: "), jsonBytes(j)...), []byte("\n\n")...))
+				return emit(jsonBytes(j))
 			}
 			return nil
 		})
@@ -367,6 +363,12 @@ func (s *Service) executeStream(r ExecutorRequest) (any, error) {
 			_ = s.call("host.stream.close", map[string]any{"stream_id": r.StreamID, "error": safeError(err)}, nil)
 		}()
 		_, err = s.consumeSSE(us, r.Model, &entry, &attempt, start, func(b []byte) error {
+			// CPA v7.3.12 passes native Chat Completions through as raw JSON,
+			// but its OpenAI-to-Claude translator requires SSE input. The host
+			// rewrites Format/SourceFormat; request_path preserves the HTTP route.
+			if str(r.Metadata["request_path"]) == "/v1/messages" {
+				b = append(append([]byte("data: "), b...), []byte("\n\n")...)
+			}
 			if e := s.call("host.stream.emit", map[string]any{"stream_id": r.StreamID, "payload": b}, nil); e != nil {
 				return fail(499, "client disconnected")
 			}

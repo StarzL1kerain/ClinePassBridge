@@ -152,22 +152,16 @@ func simpleSSE() []byte {
 	return stream
 }
 
-func TestModelAliasNormalizationAndRegistration(t *testing.T) {
-	for _, test := range []struct {
-		input string
-		want  string
-	}{
-		{"deepseek-v4.1-flash", "cline-pass/deepseek-v4.1-flash"},
-		{"cline-pass/deepseek-v4.1-flash", "cline-pass/deepseek-v4.1-flash"},
-		{"cline-pass/cline-pass/deepseek-v4.1-flash", "cline-pass/deepseek-v4.1-flash"},
-	} {
-		got, err := normalizeModel(test.input)
-		if err != nil || got != test.want {
-			t.Errorf("normalizeModel(%q) = %q, %v; want %q", test.input, got, err, test.want)
+func TestModelNamesArePreservedAndRegistered(t *testing.T) {
+	for _, upstream := range []string{"deepseek-v4.1-flash", "cline-pass/deepseek-v4.1-flash", "cline-pass/cline-pass/deepseek-v4.1-flash", " custom-name "} {
+		cfg := defaultConfig()
+		cfg.Models = []Model{{ID: " my-alias ", UpstreamID: upstream}}
+		if err := cfg.validate(); err != nil {
+			t.Fatal(err)
 		}
-	}
-	if _, err := normalizeModel("cline-pass/"); err == nil {
-		t.Error("empty model suffix was accepted")
+		if cfg.Models[0].ID != " my-alias " || cfg.Models[0].UpstreamID != upstream {
+			t.Fatalf("validation rewrote user model: %#v", cfg.Models[0])
+		}
 	}
 	s := registeredService(t, "native-fallback")
 	got, err := s.resolveModel("deepseek-flash")
@@ -177,6 +171,35 @@ func TestModelAliasNormalizationAndRegistration(t *testing.T) {
 	models, err := s.Handle("model.static", nil)
 	if err != nil || len(models.(map[string]any)["Models"].([]map[string]any)) == 0 {
 		t.Fatalf("registered models missing: %v, %v", models, err)
+	}
+}
+
+func TestLogSummaryUsesFilteredRecordsBeforePagination(t *testing.T) {
+	s := registeredService(t, "native-fallback")
+	s.logs = []LogEntry{
+		{Model: "keep", Status: 200, PromptTokens: 100, CompletionTokens: 20, CachedTokens: 60},
+		{Model: "keep", Status: 200, PromptTokens: 200, CompletionTokens: 30, CachedTokens: 90},
+		{Model: "other", Status: 200, PromptTokens: 1000},
+	}
+	result, err := s.logsResponse(ManagementRequest{Query: url.Values{"search": {"keep"}, "limit": {"1"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response struct {
+		Items   []LogEntry `json:"items"`
+		Summary struct {
+			Requests   int      `json:"requests"`
+			Prompt     int64    `json:"prompt_tokens"`
+			Completion int64    `json:"completion_tokens"`
+			Cached     int64    `json:"cached_tokens"`
+			Rate       *float64 `json:"cache_rate"`
+		} `json:"summary"`
+	}
+	if err := json.Unmarshal(result.(ManagementResponse).Body, &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Items) != 1 || response.Summary.Requests != 2 || response.Summary.Prompt != 300 || response.Summary.Completion != 50 || response.Summary.Cached != 150 || response.Summary.Rate == nil || *response.Summary.Rate != .5 {
+		t.Fatalf("incorrect filtered summary: %s", result.(ManagementResponse).Body)
 	}
 }
 
@@ -352,9 +375,11 @@ func TestStreamingEmitsMultipleChunksAndHandlesClientCancel(t *testing.T) {
 		name       string
 		emitFailAt int
 		wantStatus int
+		path       string
 	}{
-		{"success", 0, 200},
-		{"client cancel", 2, 499},
+		{"success", 0, 200, "/v1/chat/completions"},
+		{"Claude HTTP translation", 0, 200, "/v1/messages"},
+		{"client cancel", 2, 499, "/v1/chat/completions"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			s := registeredService(t, "native-fallback")
@@ -362,7 +387,10 @@ func TestStreamingEmitsMultipleChunksAndHandlesClientCancel(t *testing.T) {
 			h := newFakeHost(ssePlan(sse[:len(sse)/3], sse[len(sse)/3:2*len(sse)/3], sse[2*len(sse)/3:]))
 			h.emitFailAt = test.emitFailAt
 			s.SetHost(h.call)
-			if _, err := s.Handle("executor.execute_stream", executorRequest("client-1")); err != nil {
+			var req ExecutorRequest
+			_ = json.Unmarshal(executorRequest("client-1"), &req)
+			req.Metadata = map[string]any{"request_path": test.path}
+			if _, err := s.Handle("executor.execute_stream", jsonBytes(req)); err != nil {
 				t.Fatalf("start executor stream: %v", err)
 			}
 			select {
@@ -383,8 +411,19 @@ func TestStreamingEmitsMultipleChunksAndHandlesClientCancel(t *testing.T) {
 				t.Fatalf("stream log = %#v", s.logs)
 			}
 			if test.emitFailAt == 0 {
-				if len(emitted) < 3 || !bytes.Contains(emitted[len(emitted)-1], []byte("[DONE]")) || closeError != "" {
+				if len(emitted) < 2 || closeError != "" {
 					t.Fatalf("stream output = %#v, close error = %q", emitted, closeError)
+				}
+				for _, payload := range emitted {
+					if test.path == "/v1/messages" {
+						if !bytes.HasPrefix(payload, []byte("data: ")) {
+							t.Fatalf("Claude translator requires SSE input: %q", payload)
+						}
+						payload = bytes.TrimSpace(bytes.TrimPrefix(payload, []byte("data: ")))
+					}
+					if !json.Valid(payload) {
+						t.Fatalf("executor payload must be raw JSON for CPA framing: %q", payload)
+					}
 				}
 			} else if len(emitted) != 1 || !strings.Contains(closeError, "client disconnected") {
 				t.Fatalf("cancel output = %#v, close error = %q", emitted, closeError)

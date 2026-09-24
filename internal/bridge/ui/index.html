@@ -8,39 +8,39 @@
   <title>ClinePassBridge · 管理</title>
   <style>
     :root {
-      color-scheme: light dark;
+      color-scheme: light;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Microsoft YaHei", sans-serif;
       font-size: 14px;
       line-height: 1.5;
-      --bg: #f5f7f8; --surface: #fff; --surface-2: #f8fafb; --ink: #172126;
-      --muted: #64737b; --line: #dce3e6; --accent: #087b77; --accent-ink: #fff;
-      --success: #16845a; --warn: #a86613; --danger: #c34842; --focus: #35a9a4;
-      --code-bg: #edf2f3; --shadow: 0 8px 24px rgba(26, 47, 53, .05);
+      --bg: #faf9f5; --surface: #fffdf9; --surface-2: #f0eee8; --ink: #2d2a26;
+      --muted: #6d6760; --line: #d5d2cb; --accent: #8b8680; --accent-hover: #7f7a74; --accent-ink: #fff;
+      --success: #087c54; --warn: #985d0a; --danger: #b8493a; --focus: #726d67;
+      --code-bg: #f0eee8; --shadow: 0 1px 2px rgba(0, 0, 0, .08);
     }
+    :root[data-theme="white"] { --bg: #fff; --surface: #fff; --surface-2: #f6f6f6; --line: #d9d9d9; --code-bg: #f6f6f6; }
+    :root[data-theme="dark"] { color-scheme: dark; --bg: #151412; --surface: #1d1b18; --surface-2: #262320; --ink: #f6f4f1; --muted: #c9c3bb; --line: #4a453f; --accent: #8b8680; --accent-hover: #9a948e; --accent-ink: #fff; --success: #6ee7b7; --warn: #f2c77c; --danger: #f1a399; --focus: #a6a099; --code-bg: #262320; --shadow: 0 1px 3px rgba(0, 0, 0, .3); }
     * { box-sizing: border-box; }
     body { margin: 0; background: var(--bg); color: var(--ink); }
     button, input, select { font: inherit; }
     button { cursor: pointer; }
     button:disabled { cursor: not-allowed; opacity: .55; }
     :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
-    .shell { max-width: 1360px; margin: 0 auto; padding: 24px clamp(16px, 3vw, 40px) 56px; }
+    .shell { max-width: 1360px; margin: 0 auto; padding: 42px clamp(16px, 3vw, 40px) 56px; }
     .topbar, .heading, .section-head, .toolbar, .pagination, .row-main, .detail-head, .field-line, .credential-row, .model-row { display: flex; align-items: center; gap: 12px; }
-    .topbar { justify-content: space-between; min-height: 48px; }
+    .topbar { min-height: 32px; }
     .brand { display: flex; align-items: center; gap: 11px; min-width: 0; font-weight: 700; font-size: 15px; }
     .brandmark { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 6px; background: var(--accent); color: #fff; font-size: 16px; font-weight: 800; flex: none; }
     .brand span:last-child { overflow-wrap: anywhere; }
-    .top-actions { display: flex; align-items: center; gap: 8px; }
     .version { color: var(--muted); font-size: 12px; white-space: nowrap; }
-    .heading { justify-content: space-between; align-items: end; margin: 28px 0 18px; }
-    h1 { margin: 0; font-size: clamp(24px, 2.2rem, 30px); line-height: 1.2; letter-spacing: 0; }
+    h1 { margin: 0; font-size: 20px; line-height: 1.3; letter-spacing: 0; }
     h2 { margin: 0; font-size: 16px; line-height: 1.3; }
     p { margin: 0; }
-    .subtitle { margin-top: 6px; color: var(--muted); }
-    .button { min-height: 38px; padding: 7px 12px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); transition: border-color .16s, background .16s; white-space: nowrap; }
-    .button:hover:not(:disabled) { border-color: var(--accent); background: var(--surface-2); }
+    .button { min-height: 38px; padding: 7px 12px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface-2); color: var(--ink); font-weight: 600; transition: border-color .16s, background .16s; white-space: nowrap; }
+    .button:hover:not(:disabled) { border-color: var(--accent); background: var(--code-bg); }
     .button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
-    .button.primary:hover:not(:disabled) { filter: brightness(.93); background: var(--accent); }
-    .button.danger { color: var(--danger); }
+    .button.primary:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
+    .button.danger { background: #c65746; border-color: #c65746; color: #fff; }
+    .button.danger:hover:not(:disabled) { background: #ae4738; border-color: #ae4738; }
     .button.compact { min-height: 32px; padding: 4px 9px; font-size: 12px; }
     .button.icon { width: 38px; padding: 0; display: grid; place-items: center; font-size: 19px; line-height: 1; }
     .button.ghost { border-color: transparent; background: transparent; color: var(--muted); }
@@ -49,18 +49,21 @@
     .badge.good { background: color-mix(in srgb, var(--success) 12%, var(--surface)); color: var(--success); }
     .badge.warn { background: color-mix(in srgb, var(--warn) 14%, var(--surface)); color: var(--warn); }
     .badge.bad { background: color-mix(in srgb, var(--danger) 12%, var(--surface)); color: var(--danger); }
-    .summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
-    .summary-item { padding: 13px 16px; background: var(--surface); min-width: 0; }
+    .summary-scope { color: var(--muted); font-size: 12px; margin: 2px 0 10px; }
+    .summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: var(--surface); }
+    .summary-item { padding: 12px 16px; min-width: 0; }
+    .summary-item + .summary-item { border-left: 1px solid var(--line); }
     .summary-label { font-size: 11px; color: var(--muted); margin-bottom: 3px; }
-    .summary-value { font-weight: 700; font-size: 16px; overflow-wrap: anywhere; }
+    .summary-value { font-weight: 700; font-size: 17px; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
     .summary-note { color: var(--muted); font-size: 11px; margin-top: 2px; overflow-wrap: anywhere; }
+    .summary + .log-head { margin-top: 18px; }
     .notice { margin: 14px 0 0; padding: 10px 13px; border: 1px solid color-mix(in srgb, var(--warn) 30%, var(--line)); border-left: 3px solid var(--warn); border-radius: 4px; color: var(--ink); background: color-mix(in srgb, var(--warn) 7%, var(--surface)); }
     .notice.error { border-color: color-mix(in srgb, var(--danger) 30%, var(--line)); border-left-color: var(--danger); background: color-mix(in srgb, var(--danger) 7%, var(--surface)); }
     .notice[hidden], [hidden] { display: none !important; }
-    .tabs { display: flex; gap: 24px; margin-top: 26px; border-bottom: 1px solid var(--line); }
+    .tabs { display: flex; gap: 24px; margin-top: 10px; border-bottom: 1px solid var(--line); }
     .tab { border: 0; background: none; color: var(--muted); padding: 0 2px 11px; border-bottom: 2px solid transparent; font-weight: 600; }
     .tab[aria-selected="true"] { color: var(--accent); border-color: var(--accent); }
-    .section-head { justify-content: space-between; margin: 23px 0 14px; }
+    .section-head { justify-content: space-between; margin: 20px 0 14px; }
     .toolbar { flex-wrap: wrap; margin-bottom: 14px; }
     .control { height: 38px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); padding: 7px 10px; min-width: 0; }
     .control::placeholder { color: var(--muted); }
@@ -68,9 +71,9 @@
     .toolbar select, .toolbar .provider-filter { flex: 0 1 155px; }
     .count { margin-left: auto; color: var(--muted); white-space: nowrap; font-size: 12px; }
     .log-head { display: grid; grid-template-columns: minmax(145px, 1.1fr) minmax(180px, 1.45fr) minmax(90px, .6fr) minmax(170px, 1.35fr) minmax(112px, .8fr) minmax(128px, .9fr) 26px; gap: 16px; padding: 0 15px 9px; color: var(--muted); font-size: 11px; font-weight: 700; }
-    .log-list { border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: var(--surface); box-shadow: var(--shadow); }
-    .log-entry + .log-entry { border-top: 1px solid var(--line); }
-    .log-entry[open] { background: var(--surface-2); }
+    .log-list { display: grid; gap: 10px; }
+    .log-entry { border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: var(--surface); }
+    .log-entry[open] { background: var(--surface-2); box-shadow: inset 3px 0 var(--accent); }
     .log-entry > summary { list-style: none; cursor: pointer; }
     .log-entry > summary::-webkit-details-marker { display: none; }
     .row-main { display: grid; grid-template-columns: minmax(145px, 1.1fr) minmax(180px, 1.45fr) minmax(90px, .6fr) minmax(170px, 1.35fr) minmax(112px, .8fr) minmax(128px, .9fr) 26px; gap: 16px; padding: 14px 15px; align-items: start; }
@@ -83,7 +86,7 @@
     .mono { font-size: 12px; }
     .chevron { color: var(--muted); font-size: 18px; line-height: 1; transform: rotate(0); transition: transform .16s; }
     details[open] .chevron { transform: rotate(90deg); }
-    .detail { border-top: 1px solid var(--line); padding: 15px; }
+    .detail { border-top: 1px solid var(--line); padding: 15px 18px; }
     .detail-head { align-items: flex-start; justify-content: space-between; margin-bottom: 12px; }
     .detail-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 20px; }
     .datum-label { color: var(--muted); font-size: 11px; margin-bottom: 2px; }
@@ -111,7 +114,7 @@
     .field { display: grid; gap: 5px; min-width: 0; }
     .field label { color: var(--muted); font-size: 12px; font-weight: 600; }
     .field .control { width: 100%; }
-    .field-line { align-items: end; }
+    .field-line { align-items: end; justify-content: space-between; }
     .field-line .field { flex: 1; }
     .form-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 2px; }
     .config-meta { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 14px; }
@@ -135,10 +138,11 @@
     .candidate-empty { padding: 22px 12px; text-align: center; color: var(--muted); }
     .toast { position: fixed; right: 18px; bottom: 18px; max-width: min(420px, calc(100vw - 36px)); border: 1px solid var(--line); border-radius: 6px; padding: 10px 13px; background: var(--ink); color: var(--surface); box-shadow: var(--shadow); z-index: 10; }
     @media (prefers-color-scheme: dark) {
-      :root { --bg: #111a1d; --surface: #1b262a; --surface-2: #202e32; --ink: #edf3f3; --muted: #a4b4b8; --line: #344348; --accent: #54c4b6; --accent-ink: #0a2525; --success: #67d5a6; --warn: #e7b467; --danger: #f18d89; --focus: #8ae6dc; --code-bg: #2b3b40; --shadow: 0 8px 24px rgba(0,0,0,.12); }
+      :root:not([data-theme]) { color-scheme: dark; --bg: #151412; --surface: #1d1b18; --surface-2: #262320; --ink: #f6f4f1; --muted: #c9c3bb; --line: #4a453f; --accent: #8b8680; --accent-hover: #9a948e; --accent-ink: #fff; --success: #6ee7b7; --warn: #f2c77c; --danger: #f1a399; --focus: #a6a099; --code-bg: #262320; --shadow: 0 1px 3px rgba(0,0,0,.3); }
     }
     @media (max-width: 1000px) {
       .log-head { display: none; }
+      .log-list { margin-top: 16px; }
       .row-main { grid-template-columns: repeat(3, minmax(0, 1fr)) 20px; }
       .row-main .cell:nth-child(4), .row-main .cell:nth-child(5), .row-main .cell:nth-child(6) { grid-row: 2; }
       .row-main .cell:nth-child(4) { grid-column: 1; }
@@ -148,15 +152,16 @@
       .cell-label { display: block; margin-bottom: 2px; }
     }
     @media (max-width: 740px) {
-      .shell { padding-top: 14px; }
+      .shell { padding-top: 30px; }
       .config-grid { grid-template-columns: 1fr; }
+      .summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .summary-item:nth-child(3) { border-left: 0; }
+      .summary-item:nth-child(n+3) { border-top: 1px solid var(--line); }
       .detail-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .attempt { grid-template-columns: 24px minmax(80px, 1fr) minmax(80px, 1fr); }
       .attempt > :nth-child(4), .attempt > :nth-child(5) { grid-column: 2 / -1; }
-      .version { display: none; }
     }
     @media (max-width: 480px) {
-      .heading { margin-top: 22px; }
       .summary-item { padding: 11px; }
       .toolbar { gap: 8px; }
       .toolbar select, .toolbar .provider-filter { flex: 1 1 calc(50% - 4px); }
@@ -179,19 +184,13 @@
       .candidate-tools { flex-wrap: wrap; }
       .candidate-tools .control { flex-basis: 100%; }
     }
+    html.embedded .shell { padding-top: var(--host-inset, 90px); }
   </style>
 </head>
 <body>
   <main class="shell">
     <div class="topbar">
       <div class="brand"><span class="brandmark" aria-hidden="true">P</span><span>ClinePassBridge</span></div>
-      <div class="top-actions"><span class="version" id="version">版本 --</span><button class="button compact" id="authButton" type="button">管理密钥</button></div>
-    </div>
-
-    <div class="heading"><div><h1>请求与配置</h1><p class="subtitle">Cline Pass 独立渠道</p></div></div>
-    <div class="summary" aria-label="服务概览">
-      <div class="summary-item"><div class="summary-label">凭据</div><div class="summary-value" id="statCredentials">--</div><div class="summary-note">已导入</div></div>
-      <div class="summary-item"><div class="summary-label">模型映射</div><div class="summary-value" id="statModels">--</div><div class="summary-note">当前注册</div></div>
     </div>
     <div class="notice error" id="logPersistenceError" role="alert" hidden></div>
     <div class="notice error" id="globalError" role="alert" hidden></div>
@@ -209,6 +208,13 @@
         <input class="control provider-filter" id="providerFilter" list="providerOptions" placeholder="实际渠道" aria-label="按实际渠道筛选"><datalist id="providerOptions"></datalist>
         <span class="count" id="logCount">-- 条</span>
       </div>
+      <p class="summary-scope">当前筛选 · 全部保留日志，不限当前页</p>
+      <div class="summary" aria-label="当前筛选的日志统计">
+        <div class="summary-item"><div class="summary-label">请求数</div><div class="summary-value" id="statRequests">--</div><div class="summary-note">当前筛选</div></div>
+        <div class="summary-item"><div class="summary-label">输入 tokens</div><div class="summary-value" id="statPromptTokens">--</div><div class="summary-note">全部保留请求</div></div>
+        <div class="summary-item"><div class="summary-label">输出 tokens</div><div class="summary-value" id="statCompletionTokens">--</div><div class="summary-note">全部保留请求</div></div>
+        <div class="summary-item"><div class="summary-label">输入缓存率</div><div class="summary-value" id="statCacheRate">--</div><div class="summary-note" id="statCachedTokens">缓存 tokens --</div></div>
+      </div>
       <div class="log-head" aria-hidden="true"><span>时间 / 请求</span><span>客户端模型 / 上游</span><span>结果</span><span>实际上游</span><span>延时</span><span>用量</span><span></span></div>
       <div class="log-list" id="logList" aria-live="polite"><div class="empty">正在读取日志…</div></div>
       <div class="pagination"><button class="button compact" id="prevPage" type="button">上一页</button><span id="pageInfo">第 1 页</span><button class="button compact" id="nextPage" type="button">下一页</button></div>
@@ -218,14 +224,8 @@
       <div class="section-head"><h2>插件配置</h2><button class="button compact" id="refreshConfig" type="button">刷新配置</button></div>
       <div class="config-grid">
         <div class="panel">
-          <div class="panel-head"><div><h2>模型映射</h2><p class="panel-hint">客户端名称与 Cline Pass 上游模型</p></div><button class="button compact" id="refreshModels" type="button">刷新模型</button></div>
+          <div class="panel-head"><div><h2>模型映射</h2><p class="panel-hint">客户端名称与 Cline Pass 上游模型</p></div><div class="row-actions"><button class="button compact" id="refreshModels" type="button">刷新模型</button><button class="button compact primary" id="openModel" type="button">添加模型</button></div></div>
           <div id="modelList" aria-live="polite"><div class="empty">正在读取模型…</div></div>
-          <form class="form-stack" id="modelForm">
-            <strong id="modelFormTitle">添加模型映射</strong>
-            <div class="field"><label for="modelId">客户端模型名称</label><input class="control mono" id="modelId" required placeholder="例如 deepseek-v4.1-flash" autocomplete="off"></div>
-            <div class="field"><label for="upstreamId">Cline Pass 上游模型</label><input class="control mono" id="upstreamId" required placeholder="deepseek-v4.1-flash 或 cline-pass/deepseek-v4.1-flash" autocomplete="off"><p class="panel-hint">保存时自动补全并去重 cline-pass/ 前缀。</p></div>
-            <div class="form-foot"><button class="button" id="cancelModelEdit" type="button" hidden>取消编辑</button><button class="button primary" id="saveModel" type="submit">添加模型</button></div>
-          </form>
           <p class="inline-state" id="modelState"></p>
         </div>
         <div class="panel">
@@ -243,6 +243,10 @@
           </form>
           <p class="inline-state" id="settingsState"></p>
         </div>
+        <div class="panel">
+          <div class="panel-head"><div><h2>管理访问</h2><p class="panel-hint">当前浏览器会话</p></div></div>
+          <div class="field-line"><span class="version" id="version">版本 --</span><button class="button compact" id="authButton" type="button">管理密钥</button></div>
+        </div>
       </div>
     </section>
   </main>
@@ -254,6 +258,15 @@
       <div class="field"><label for="authType">请求头</label><select class="control" id="authType"><option value="bearer">Authorization: Bearer</option><option value="x-management-key">X-Management-Key</option></select></div>
       <div class="field"><label for="authKey">管理密钥</label><input class="control" id="authKey" type="password" autocomplete="new-password" placeholder="粘贴管理密钥"></div>
       <div class="dialog-actions"><button class="button danger" id="clearAuth" type="button">清除密钥</button><button class="button" id="closeAuth" type="button">取消</button><button class="button primary" type="submit">应用</button></div>
+    </form>
+  </dialog>
+  <dialog id="modelDialog" aria-labelledby="modelFormTitle">
+    <h2 id="modelFormTitle">添加模型映射</h2>
+    <form class="form-stack" id="modelForm" autocomplete="off">
+      <div class="field"><label for="modelId">客户端模型名称</label><input class="control mono" id="modelId" required placeholder="例如 deepseek-v4.1-flash" autocomplete="off"></div>
+      <div class="field"><label for="upstreamId">Cline Pass 上游模型</label><input class="control mono" id="upstreamId" required placeholder="例如 cline-pass/deepseek-v4.1-flash" autocomplete="off"></div>
+      <p class="inline-state" id="modelDialogState" role="alert"></p>
+      <div class="dialog-actions"><button class="button" id="cancelModelEdit" type="button">取消</button><button class="button primary" id="saveModel" type="submit">添加模型</button></div>
     </form>
   </dialog>
   <dialog class="candidate-dialog" id="modelCandidateDialog" aria-labelledby="modelCandidateTitle">
@@ -282,11 +295,34 @@
     const API_BASE = '__PASSBRIDGE_API_BASE__';
     const PAGE_SIZE = 50;
     const $ = (id) => document.getElementById(id);
-    const state = { key: '', authType: 'bearer', page: 0, total: 0, logsController: null, providers: new Set(), models: [], editingModelIndex: -1, config: null, toastTimer: 0, modelCandidates: [], selectedCandidates: new Set(), candidateBusy: false, editingCredentialId: '', credentialBusy: false };
+    const state = { key: '', authType: 'bearer', page: 0, total: 0, logsController: null, providers: new Set(), models: [], editingModelIndex: -1, modelBusy: false, config: null, toastTimer: 0, modelCandidates: [], selectedCandidates: new Set(), candidateBusy: false, editingCredentialId: '', credentialBusy: false };
+    function applyTheme(value) {
+      document.documentElement.dataset.theme = value === 'dark' || value === 'white' ? value : 'light';
+    }
+    function syncTheme() {
+      try {
+        if (window.parent !== window) {
+          document.documentElement.classList.add('embedded');
+          const hostHeader = parseFloat(window.parent.getComputedStyle(window.parent.document.documentElement).getPropertyValue('--header-height')) || 80;
+          document.documentElement.style.setProperty('--host-inset', `${hostHeader + 12}px`);
+          applyTheme(window.parent.document.documentElement.getAttribute('data-theme'));
+          return true;
+        }
+      } catch { if (window.parent !== window) document.documentElement.classList.add('embedded'); }
+      try {
+        const saved = JSON.parse(localStorage.getItem('cli-proxy-theme') || '{}').state?.theme;
+        applyTheme(saved === 'auto' ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'white') : saved);
+      } catch { applyTheme(null); }
+      return false;
+    }
+    if (syncTheme()) new MutationObserver(syncTheme).observe(window.parent.document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'style'] });
+    window.addEventListener('storage', (event) => { if (event.key === 'cli-proxy-theme') syncTheme(); });
+    matchMedia('(prefers-color-scheme: dark)').addEventListener('change', syncTheme);
     const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
     const present = (value) => value !== null && value !== undefined && String(value).trim() !== '';
     const shown = (value, fallback = '未记录') => present(value) ? esc(value) : fallback;
     const number = (value) => Number.isFinite(Number(value)) && present(value) ? Number(value).toLocaleString('zh-CN') : '--';
+    const percent = (value) => value !== null && value !== undefined && Number.isFinite(Number(value)) && Number(value) >= 0 && Number(value) <= 1 ? `${(Number(value) * 100).toLocaleString('zh-CN', { maximumFractionDigits: 1 })}%` : '--';
     const ms = (value) => Number.isFinite(Number(value)) && present(value) ? `${number(value)} ms` : '--';
     const ttft = (log) => log.stream === true && Number.isFinite(Number(log.ttft_ms)) && Number(log.ttft_ms) > 0 ? ms(log.ttft_ms) : '—';
     const apiReady = () => API_BASE && !API_BASE.includes('__PASSBRIDGE_');
@@ -377,9 +413,17 @@
       state.logsController = new AbortController();
       $('refreshLogs').disabled = true;
       $('logList').innerHTML = '<div class="empty">正在读取日志…</div>';
+      for (const id of ['statRequests', 'statPromptTokens', 'statCompletionTokens', 'statCacheRate']) $(id).textContent = '--';
+      $('statCachedTokens').textContent = '缓存 tokens --';
       try {
         const data = await api('/logs', { query: { limit: PAGE_SIZE, offset: state.page * PAGE_SIZE, search: $('search').value.trim(), status: $('statusFilter').value, provider: $('providerFilter').value }, signal: state.logsController.signal });
         const items = Array.isArray(data?.items) ? data.items : [];
+        const summary = data?.summary;
+        $('statRequests').textContent = number(summary?.requests);
+        $('statPromptTokens').textContent = number(summary?.prompt_tokens);
+        $('statCompletionTokens').textContent = number(summary?.completion_tokens);
+        $('statCacheRate').textContent = percent(summary?.cache_rate);
+        $('statCachedTokens').textContent = `缓存 tokens ${number(summary?.cached_tokens)}`;
         state.total = Number.isFinite(Number(data?.total)) ? Number(data.total) : items.length;
         for (const log of items) if (actualProvider(log.provider)) state.providers.add(actualProvider(log.provider));
         renderProviderOptions();
@@ -391,6 +435,8 @@
         globalError('');
       } catch (error) {
         if (error.name === 'AbortError') return;
+        for (const id of ['statRequests', 'statPromptTokens', 'statCompletionTokens', 'statCacheRate']) $(id).textContent = '--';
+        $('statCachedTokens').textContent = '缓存 tokens --';
         $('logList').innerHTML = `<div class="empty"><strong>日志读取失败</strong>${esc(error.message)}</div>`;
         globalError(error.message);
       } finally { $('refreshLogs').disabled = false; }
@@ -398,36 +444,28 @@
     async function loadStatus() {
       const data = await api('/status');
       $('version').textContent = `版本 ${present(data?.version) ? data.version : '--'}`;
-      $('statCredentials').textContent = number(data?.credential_count);
-      $('statModels').textContent = number(data?.model_count);
       const persistenceError = present(data?.log_persistence_error) ? String(data.log_persistence_error) : '';
       $('logPersistenceError').textContent = persistenceError ? `日志持久化失败：${persistenceError}。当前日志可能仅保留在内存中。` : '';
       $('logPersistenceError').hidden = !persistenceError;
     }
-    function normalizeUpstream(value) {
-      const name = String(value || '').trim().replace(/^(?:cline-pass\/)+/gi, '');
-      return name ? `cline-pass/${name}` : '';
-    }
-    const displayModelId = (value) => String(value || '').replace(/^(?:cline-pass\/)+/gi, '');
     function resetModelForm() {
       state.editingModelIndex = -1;
       $('modelForm').reset();
       $('modelFormTitle').textContent = '添加模型映射';
       $('saveModel').textContent = '添加模型';
-      $('cancelModelEdit').hidden = true;
+      $('modelDialogState').textContent = '';
     }
     function renderModels(data) {
       state.models = Array.isArray(data?.models) ? data.models.map((model) => ({ id: model.id, upstream_id: model.upstream_id, providers: Array.isArray(model.providers) ? [...model.providers] : [] })) : [];
       for (const model of state.models) for (const provider of model.providers) if (present(provider)) state.providers.add(String(provider));
       renderProviderOptions();
-      $('modelList').innerHTML = state.models.length ? state.models.map((model, index) => `<div class="model-row"><div class="model-main"><div class="primary-text mono">${shown(displayModelId(model.id))}</div><div class="subtext mono">→ ${shown(model.upstream_id)}</div></div><div class="row-actions"><button class="button compact edit-model" type="button" data-index="${index}">编辑</button><button class="button compact danger delete-model" type="button" data-index="${index}">删除</button></div></div>`).join('') : '<div class="empty">暂无模型映射</div>';
+      $('modelList').innerHTML = state.models.length ? state.models.map((model, index) => `<div class="model-row"><div class="model-main"><div class="primary-text mono">${shown(model.id)}</div><div class="subtext mono">→ ${shown(model.upstream_id)}</div></div><div class="row-actions"><button class="button compact edit-model" type="button" data-index="${index}">编辑</button><button class="button compact danger delete-model" type="button" data-index="${index}">删除</button></div></div>`).join('') : '<div class="empty">暂无模型映射</div>';
       if (state.editingModelIndex >= state.models.length) resetModelForm();
       if ($('modelCandidateDialog').open) renderCandidateList();
     }
     async function saveModels(next) {
       await api('/models', { method: 'PUT', body: { models: next } });
       renderModels(await api('/models'));
-      resetModelForm();
       await loadStatus();
     }
     function updateCandidateCount() {
@@ -508,7 +546,7 @@
         if (!Array.isArray(result?.models)) throw new Error('模型目录响应缺少候选列表');
         renderModels(await api('/models'));
         const unique = new Set();
-        state.modelCandidates = result.models.map((model) => ({ id: displayModelId(model?.id).trim(), upstream_id: normalizeUpstream(model?.upstream_id) })).filter((model) => {
+        state.modelCandidates = result.models.map((model) => ({ id: String(model?.id ?? ''), upstream_id: String(model?.upstream_id ?? '') })).filter((model) => {
           const key = model.id.toLowerCase();
           if (!model.id || !model.upstream_id || unique.has(key)) return false;
           unique.add(key);
@@ -568,15 +606,32 @@
         }
         const saved = await api('/models', { method: 'PUT', body: { models: [...existing, ...additions] } });
         renderModels(Array.isArray(saved?.models) ? saved : { models: [...existing, ...additions] });
-        resetModelForm();
         $('modelCandidateDialog').close();
         $('modelState').textContent = `已添加 ${additions.length} 个模型`;
         loadStatus().catch((error) => globalError(`状态刷新失败：${error.message}`));
       } catch (error) { $('candidateState').textContent = `添加失败：${error.message}`; }
       finally { state.candidateBusy = false; $('cancelCandidates').disabled = false; renderCandidateList(); }
     });
-    $('cancelModelEdit').addEventListener('click', resetModelForm);
+    function openModelDialog(index = -1) {
+      if (state.modelBusy) return;
+      resetModelForm();
+      const model = state.models[index];
+      if (model) {
+        state.editingModelIndex = index;
+        $('modelId').value = model.id ?? '';
+        $('upstreamId').value = model.upstream_id ?? '';
+        $('modelFormTitle').textContent = '编辑模型映射';
+        $('saveModel').textContent = '保存映射';
+      }
+      $('modelDialog').showModal();
+      $('modelId').focus();
+    }
+    $('openModel').addEventListener('click', () => openModelDialog());
+    $('cancelModelEdit').addEventListener('click', () => $('modelDialog').close());
+    $('modelDialog').addEventListener('cancel', (event) => { if (state.modelBusy) event.preventDefault(); });
+    $('modelDialog').addEventListener('close', resetModelForm);
     $('modelList').addEventListener('click', async (event) => {
+      if (state.modelBusy) return;
       const edit = event.target.closest('.edit-model');
       const remove = event.target.closest('.delete-model');
       const button = edit || remove;
@@ -585,36 +640,34 @@
       const model = state.models[index];
       if (!model) return;
       if (edit) {
-        state.editingModelIndex = index;
-        $('modelId').value = model.id || '';
-        $('upstreamId').value = model.upstream_id || '';
-        $('modelFormTitle').textContent = '编辑模型映射';
-        $('saveModel').textContent = '保存映射';
-        $('cancelModelEdit').hidden = false;
-        $('modelId').focus();
+        openModelDialog(index);
         return;
       }
-      if (!confirm(`删除模型映射「${model.id}」？`)) return;
+      state.modelBusy = true;
       button.disabled = true;
       $('modelState').textContent = '正在删除…';
       try { await saveModels(state.models.filter((_, itemIndex) => itemIndex !== index)); $('modelState').textContent = '模型映射已删除'; }
       catch (error) { $('modelState').textContent = `删除失败：${error.message}`; button.disabled = false; }
+      finally { state.modelBusy = false; }
     });
     $('modelForm').addEventListener('submit', async (event) => {
       event.preventDefault();
-      const id = $('modelId').value.trim();
-      const upstream_id = normalizeUpstream($('upstreamId').value);
-      if (!id || /\s/.test(id) || !upstream_id || /\s/.test(upstream_id)) { $('modelState').textContent = '模型名称不能为空或包含空格'; return; }
-      if (state.models.some((model, index) => index !== state.editingModelIndex && String(model.id).toLowerCase() === id.toLowerCase())) { $('modelState').textContent = '客户端模型名称已存在'; return; }
+      if (state.modelBusy) return;
+      const id = $('modelId').value;
+      const upstream_id = $('upstreamId').value;
+      if (!id.trim() || !upstream_id.trim()) { $('modelDialogState').textContent = '两个模型名称都不能为空'; return; }
+      if (state.models.some((model, index) => index !== state.editingModelIndex && String(model.id).toLowerCase() === id.toLowerCase())) { $('modelDialogState').textContent = '客户端模型名称已存在'; return; }
       const next = state.models.map((model) => ({ ...model }));
       const original = next[state.editingModelIndex];
       const item = { id, upstream_id, providers: original?.providers || [] };
       if (state.editingModelIndex < 0) next.push(item); else next[state.editingModelIndex] = item;
+      state.modelBusy = true;
       $('saveModel').disabled = true;
-      $('modelState').textContent = '正在保存…';
-      try { await saveModels(next); $('modelState').textContent = '模型映射已保存'; }
-      catch (error) { $('modelState').textContent = `保存失败：${error.message}`; }
-      finally { $('saveModel').disabled = false; }
+      $('cancelModelEdit').disabled = true;
+      $('modelDialogState').textContent = '正在保存…';
+      try { await saveModels(next); $('modelDialog').close(); $('modelState').textContent = '模型映射已保存'; }
+      catch (error) { $('modelDialogState').textContent = `保存失败：${error.message}`; }
+      finally { state.modelBusy = false; $('saveModel').disabled = false; $('cancelModelEdit').disabled = false; }
     });
     $('settingsForm').addEventListener('submit', async (event) => {
       event.preventDefault();

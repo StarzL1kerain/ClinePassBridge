@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-const Version = "0.1.2"
+const Version = "0.1.3"
 const Provider = "cline-pass"
 const PluginID = "clinepassbridge"
 
@@ -92,16 +92,6 @@ type Config struct {
 func defaultConfig() Config {
 	return Config{DataDir: "plugins/clinepassbridge-data", BaseURL: "https://api.cline.bot/api/v1", Models: []Model{{ID: "deepseek-v4.1-flash", UpstreamID: "cline-pass/deepseek-v4.1-flash"}, {ID: "deepseek-flash", UpstreamID: "cline-pass/deepseek-v4.1-flash"}, {ID: "cline-pass/deepseek-v4.1-flash", UpstreamID: "cline-pass/deepseek-v4.1-flash"}}, NonstreamMode: "native-fallback", TimeoutSeconds: 180, LogRetention: 1000, MaxResponseBytes: 16 << 20}
 }
-func normalizeModel(s string) (string, error) {
-	s = strings.TrimSpace(s)
-	for strings.HasPrefix(s, "cline-pass/") {
-		s = strings.TrimPrefix(s, "cline-pass/")
-	}
-	if s == "" || strings.ContainsAny(s, "\r\n\t?#") {
-		return "", fail(400, "invalid model identifier")
-	}
-	return "cline-pass/" + s, nil
-}
 func (c *Config) validate() error {
 	u, e := url.Parse(c.BaseURL)
 	if e != nil || u.Scheme != "https" || u.Host != "api.cline.bot" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || strings.TrimRight(u.Path, "/") != "/api/v1" {
@@ -122,16 +112,13 @@ func (c *Config) validate() error {
 	seen := map[string]bool{}
 	for i := range c.Models {
 		m := &c.Models[i]
-		m.ID = strings.TrimSpace(m.ID)
-		if m.ID == "" || seen[m.ID] {
+		if strings.TrimSpace(m.ID) == "" || seen[m.ID] {
 			return fail(400, "model aliases must be nonempty and unique")
 		}
 		seen[m.ID] = true
-		up, e := normalizeModel(m.UpstreamID)
-		if e != nil {
-			return e
+		if strings.TrimSpace(m.UpstreamID) == "" || strings.ContainsAny(m.ID+m.UpstreamID, "\r\n\t") {
+			return fail(400, "model identifiers must be nonempty and contain no control whitespace")
 		}
-		m.UpstreamID = up
 	}
 	if len(c.Models) == 0 {
 		return fail(400, "at least one model is required")

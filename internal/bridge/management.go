@@ -157,6 +157,17 @@ func (s *Service) logsResponse(r ManagementRequest) (any, error) {
 		filtered = append(filtered, v)
 	}
 	total := len(filtered)
+	var prompt, completion, cached int64
+	for _, entry := range filtered {
+		prompt += entry.PromptTokens
+		completion += entry.CompletionTokens
+		cached += entry.CachedTokens
+	}
+	var cacheRate any
+	if prompt > 0 {
+		cacheRate = float64(cached) / float64(prompt)
+	}
+	summary := map[string]any{"requests": total, "prompt_tokens": prompt, "completion_tokens": completion, "cached_tokens": cached, "cache_rate": cacheRate}
 	if offset > total {
 		offset = total
 	}
@@ -164,7 +175,7 @@ func (s *Service) logsResponse(r ManagementRequest) (any, error) {
 	if end > total {
 		end = total
 	}
-	return managementJSON(200, map[string]any{"items": filtered[offset:end], "total": total})
+	return managementJSON(200, map[string]any{"items": filtered[offset:end], "total": total, "summary": summary})
 }
 func (s *Service) importCredential(r ManagementRequest) (any, error) {
 	s.credentialMu.Lock()
@@ -320,11 +331,10 @@ func (s *Service) refreshModels(callbackID string) ([]Model, error) {
 		if !strings.HasPrefix(modelID, "cline-pass/") || seen[modelID] {
 			continue
 		}
-		upstream, err := normalizeModel(modelID)
-		if err != nil {
+		if strings.TrimPrefix(modelID, "cline-pass/") == "" || strings.ContainsAny(modelID, "\r\n\t") {
 			continue
 		}
-		models = append(models, Model{ID: strings.TrimPrefix(upstream, "cline-pass/"), UpstreamID: upstream})
+		models = append(models, Model{ID: strings.TrimPrefix(modelID, "cline-pass/"), UpstreamID: modelID})
 		seen[modelID] = true
 	}
 	return models, nil
