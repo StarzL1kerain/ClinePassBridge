@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-const Version = "0.1.1"
+const Version = "0.1.2"
 const Provider = "cline-pass"
 const PluginID = "clinepassbridge"
 
@@ -87,12 +87,10 @@ type Config struct {
 	TimeoutSeconds   int     `json:"timeout_seconds" yaml:"timeout_seconds"`
 	LogRetention     int     `json:"log_retention" yaml:"log_retention"`
 	MaxResponseBytes int     `json:"max_response_bytes" yaml:"max_response_bytes"`
-	PinMode          string  `json:"pin_mode" yaml:"pin_mode"`
-	PinProvider      string  `json:"pin_provider" yaml:"pin_provider"`
 }
 
 func defaultConfig() Config {
-	return Config{DataDir: "plugins/clinepassbridge-data", BaseURL: "https://api.cline.bot/api/v1", Models: []Model{{ID: "deepseek-v4.1-flash", UpstreamID: "cline-pass/deepseek-v4.1-flash"}, {ID: "deepseek-flash", UpstreamID: "cline-pass/deepseek-v4.1-flash"}, {ID: "cline-pass/deepseek-v4.1-flash", UpstreamID: "cline-pass/deepseek-v4.1-flash"}}, NonstreamMode: "native-fallback", TimeoutSeconds: 180, LogRetention: 1000, MaxResponseBytes: 16 << 20, PinMode: "automatic"}
+	return Config{DataDir: "plugins/clinepassbridge-data", BaseURL: "https://api.cline.bot/api/v1", Models: []Model{{ID: "deepseek-v4.1-flash", UpstreamID: "cline-pass/deepseek-v4.1-flash"}, {ID: "deepseek-flash", UpstreamID: "cline-pass/deepseek-v4.1-flash"}, {ID: "cline-pass/deepseek-v4.1-flash", UpstreamID: "cline-pass/deepseek-v4.1-flash"}}, NonstreamMode: "native-fallback", TimeoutSeconds: 180, LogRetention: 1000, MaxResponseBytes: 16 << 20}
 }
 func normalizeModel(s string) (string, error) {
 	s = strings.TrimSpace(s)
@@ -121,11 +119,6 @@ func (c *Config) validate() error {
 	if c.NonstreamMode != "native" && c.NonstreamMode != "native-fallback" && c.NonstreamMode != "stream-aggregate" {
 		return fail(400, "invalid nonstream_mode")
 	}
-	if c.PinMode != "" && c.PinMode != "automatic" {
-		return fail(400, "provider pinning is unavailable: Cline currently ignores routing restrictions")
-	}
-	c.PinMode = "automatic"
-	c.PinProvider = ""
 	seen := map[string]bool{}
 	for i := range c.Models {
 		m := &c.Models[i]
@@ -155,25 +148,23 @@ type Attempt struct {
 	Error          string `json:"error,omitempty"`
 }
 type LogEntry struct {
-	ID                string    `json:"id"`
-	Time              time.Time `json:"time"`
-	Model             string    `json:"model"`
-	UpstreamModel     string    `json:"upstream_model"`
-	Stream            bool      `json:"stream"`
-	Status            int       `json:"status"`
-	Provider          string    `json:"provider"`
-	ProviderSource    string    `json:"provider_source"`
-	RequestedProvider string    `json:"requested_provider"`
-	PinResult         string    `json:"pin_result"`
-	DurationMS        int64     `json:"duration_ms"`
-	TTFTMS            int64     `json:"ttft_ms"`
-	PromptTokens      int64     `json:"prompt_tokens"`
-	CompletionTokens  int64     `json:"completion_tokens"`
-	CachedTokens      int64     `json:"cached_tokens"`
-	ReasoningTokens   int64     `json:"reasoning_tokens"`
-	Credential        string    `json:"credential"`
-	Attempts          []Attempt `json:"attempts"`
-	Error             string    `json:"error,omitempty"`
+	ID               string    `json:"id"`
+	Time             time.Time `json:"time"`
+	Model            string    `json:"model"`
+	UpstreamModel    string    `json:"upstream_model"`
+	Stream           bool      `json:"stream"`
+	Status           int       `json:"status"`
+	Provider         string    `json:"provider"`
+	ProviderSource   string    `json:"provider_source"`
+	DurationMS       int64     `json:"duration_ms"`
+	TTFTMS           int64     `json:"ttft_ms"`
+	PromptTokens     int64     `json:"prompt_tokens"`
+	CompletionTokens int64     `json:"completion_tokens"`
+	CachedTokens     int64     `json:"cached_tokens"`
+	ReasoningTokens  int64     `json:"reasoning_tokens"`
+	Credential       string    `json:"credential"`
+	Attempts         []Attempt `json:"attempts"`
+	Error            string    `json:"error,omitempty"`
 }
 
 func jsonBytes(v any) []byte      { b, _ := json.Marshal(v); return b }

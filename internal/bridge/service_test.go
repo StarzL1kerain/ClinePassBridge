@@ -549,6 +549,88 @@ func TestDeletedCredentialRejectsStaleStorageJSON(t *testing.T) {
 	}
 }
 
+func TestUpdateCredentialPreservesMigratedFileAndEffectiveKey(t *testing.T) {
+	s := registeredService(t, "native-fallback")
+	original := Credential{Type: Provider, ID: "credential-1", Label: "original", APIKey: "old-key-1234"}
+	const filename = "migrated-file.json"
+	if _, err := s.Handle("auth.parse", jsonBytes(map[string]any{
+		"Provider": Provider, "FileName": filename, "RawJSON": jsonBytes(original),
+	})); err != nil {
+		t.Fatalf("parse migrated credential: %v", err)
+	}
+	var saved []Credential
+	var savedNames []string
+	failSave := false
+	s.SetHost(func(method string, payload, out any) error {
+		if method != "host.auth.save" {
+			return fmt.Errorf("unexpected host callback %s", method)
+		}
+		request := payload.(map[string]any)
+		var credential Credential
+		if err := json.Unmarshal(request["json"].(json.RawMessage), &credential); err != nil {
+			return err
+		}
+		savedNames = append(savedNames, str(request["name"]))
+		saved = append(saved, credential)
+		if failSave {
+			return errors.New("host save failed")
+		}
+		return nil
+	})
+	update := func(id string, body any) ManagementResponse {
+		t.Helper()
+		result, err := s.Handle("management.handle", jsonBytes(ManagementRequest{
+			Method: "PUT", Path: apiBase + "/credentials", Query: url.Values{"id": {id}}, Body: jsonBytes(body),
+		}))
+		if err != nil {
+			t.Fatalf("update credential %q: %v", id, err)
+		}
+		return result.(ManagementResponse)
+	}
+	response := update(original.ID, map[string]any{"label": "renamed", "api_key": "new-key-5678"})
+	if response.StatusCode != 200 || bytes.Contains(response.Body, []byte("api_key")) || bytes.Contains(response.Body, []byte(original.APIKey)) || bytes.Contains(response.Body, []byte("new-key-5678")) {
+		t.Fatalf("updated credential response disclosed key or failed: status=%d body=%s", response.StatusCode, response.Body)
+	}
+	if len(saved) != 1 || savedNames[0] != filename || saved[0].ID != original.ID || saved[0].Label != "renamed" || saved[0].APIKey != "new-key-5678" {
+		t.Fatalf("credential save used wrong file or contents: names=%#v credentials=%#v", savedNames, saved)
+	}
+	selected, err := s.selectedCredential(ExecutorRequest{StorageJSON: jsonBytes(original)})
+	if err != nil || selected.APIKey != "new-key-5678" || selected.Label != "renamed" {
+		t.Fatalf("stale StorageJSON selected old credential: label=%q key-updated=%v err=%v", selected.Label, selected.APIKey == "new-key-5678", err)
+	}
+	response = update(original.ID, map[string]any{"label": "label only"})
+	if response.StatusCode != 200 || len(saved) != 2 || saved[1].APIKey != "new-key-5678" || saved[1].Label != "label only" {
+		t.Fatalf("label-only update changed key: status=%d saved=%#v", response.StatusCode, saved)
+	}
+	response = update(original.ID, map[string]any{"label": "empty key", "api_key": ""})
+	if response.StatusCode != 200 || len(saved) != 3 || saved[2].APIKey != "new-key-5678" || saved[2].Label != "empty key" {
+		t.Fatalf("empty-key update changed key: status=%d saved=%#v", response.StatusCode, saved)
+	}
+	for _, name := range savedNames {
+		if name != filename {
+			t.Fatalf("update replaced migrated filename: %#v", savedNames)
+		}
+	}
+	failSave = true
+	response = update(original.ID, map[string]any{"label": "failed update", "api_key": "failed-key-1234"})
+	if response.StatusCode != 500 {
+		t.Fatalf("failed host save status = %d, want 500", response.StatusCode)
+	}
+	selected, err = s.selectedCredential(ExecutorRequest{StorageJSON: jsonBytes(original)})
+	if err != nil || selected.Label != "empty key" || selected.APIKey != "new-key-5678" {
+		t.Fatalf("failed save updated memory: label=%q key-unchanged=%v err=%v", selected.Label, selected.APIKey == "new-key-5678", err)
+	}
+	if response := update("missing-id", map[string]any{"label": "missing"}); response.StatusCode != 404 {
+		t.Fatalf("missing credential status = %d, want 404", response.StatusCode)
+	}
+	if response := update(original.ID, map[string]any{"api_key": "short"}); response.StatusCode != 400 {
+		t.Fatalf("short key status = %d, want 400", response.StatusCode)
+	}
+	if len(saved) != 4 {
+		t.Fatalf("invalid updates called host save: %#v", savedNames)
+	}
+}
+
 func TestCatalogRefreshUsesPassOffersAndPreservesAliases(t *testing.T) {
 	s := registeredService(t, "native-fallback")
 	s.mu.Lock()
@@ -560,6 +642,7 @@ func TestCatalogRefreshUsesPassOffersAndPreservesAliases(t *testing.T) {
 	})); err != nil {
 		t.Fatalf("parse credential for registry refresh: %v", err)
 	}
+	originalModels := s.config().Models
 	catalog := map[string]any{
 		"clinePass": []any{
 			map[string]any{"id": "cline-pass/deepseek-v4.1-flash"},
@@ -609,13 +692,36 @@ func TestCatalogRefreshUsesPassOffersAndPreservesAliases(t *testing.T) {
 	if requestedURL != "https://api.cline.bot/api/v1/ai/cline/recommended-models" || requestedMethod != "GET" || callbackID != "catalog-callback" || hadAuthorization {
 		t.Fatalf("catalog request = %q %q callback=%q authorization=%v", requestedMethod, requestedURL, callbackID, hadAuthorization)
 	}
+	var response struct {
+		Models []Model `json:"models"`
+	}
+	if err := json.Unmarshal(result.(ManagementResponse).Body, &response); err != nil {
+		t.Fatalf("decode model candidates: %v", err)
+	}
+	if len(response.Models) != 2 || response.Models[0].ID != "deepseek-v4.1-flash" || response.Models[0].UpstreamID != "cline-pass/deepseek-v4.1-flash" || response.Models[1].ID != "new-offer" || response.Models[1].UpstreamID != "cline-pass/new-offer" {
+		t.Fatalf("unexpected Pass candidates: %#v", response.Models)
+	}
 	models := s.config().Models
+	if len(models) != 4 || !bytes.Equal(jsonBytes(models), jsonBytes(originalModels)) || len(savedAuth) != 0 {
+		t.Fatalf("candidate refresh changed registered models or saved auth: models=%#v saved=%#v", models, savedAuth)
+	}
+	if _, err := os.Stat(filepath.Join(s.config().DataDir, "settings.json")); !os.IsNotExist(err) {
+		t.Fatalf("candidate refresh wrote settings: %v", err)
+	}
+	selected := append(append([]Model(nil), models...), response.Models[1])
+	result, err = s.Handle("management.handle", jsonBytes(ManagementRequest{
+		Method: "PUT", Path: apiBase + "/models", Body: jsonBytes(map[string]any{"models": selected}),
+	}))
+	if err != nil || result.(ManagementResponse).StatusCode != 200 {
+		t.Fatalf("save selected model: %#v, %v", result, err)
+	}
+	models = s.config().Models
 	byID := make(map[string]Model, len(models))
 	for _, model := range models {
 		byID[model.ID] = model
 	}
-	if len(models) != 5 || byID["my-deepseek-alias"].UpstreamID != "cline-pass/deepseek-v4.1-flash" || byID["cline-pass/new-offer"].UpstreamID != "cline-pass/new-offer" {
-		t.Fatalf("refreshed models lost alias/Pass offer: %#v", models)
+	if len(models) != 5 || byID["my-deepseek-alias"].UpstreamID != "cline-pass/deepseek-v4.1-flash" || byID["new-offer"].UpstreamID != "cline-pass/new-offer" {
+		t.Fatalf("selected model lost alias/Pass offer: %#v", models)
 	}
 	if _, exists := byID["byok-only-model"]; exists {
 		t.Fatal("BYOK model was imported into Pass catalog")

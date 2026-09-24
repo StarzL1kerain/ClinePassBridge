@@ -6,7 +6,7 @@
       "name": "ClinePassBridge",
       "description": "Cline Pass adapter for CLIProxyAPI with model aliases, streaming and actual provider logs.",
       "author": "xiao-qiu-qiu",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "repository": "https://github.com/xiao-qiu-qiu/ClinePassBridge",
       "homepage": "https://github.com/xiao-qiu-qiu/ClinePassBridge",
       "license": "MIT",

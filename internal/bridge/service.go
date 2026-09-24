@@ -19,6 +19,8 @@ import (
 var secretPattern = regexp.MustCompile(`(?i)(?:bearer\s+|sk[-_])[a-z0-9_.-]+`)
 
 type Service struct {
+	credentialMu  sync.Mutex
+	authFiles     map[string]string
 	mu            sync.RWMutex
 	cfg           Config
 	host          HostCall
@@ -35,7 +37,7 @@ type Service struct {
 }
 
 func NewService() *Service {
-	return &Service{cfg: defaultConfig(), creds: map[string]Credential{}, streams: map[string]struct{}{}, revoked: map[string]bool{}, stopCh: make(chan struct{})}
+	return &Service{cfg: defaultConfig(), creds: map[string]Credential{}, authFiles: map[string]string{}, streams: map[string]struct{}{}, revoked: map[string]bool{}, stopCh: make(chan struct{})}
 }
 func (s *Service) SetHost(h func(string, any, any) error) { s.mu.Lock(); s.host = h; s.mu.Unlock() }
 func (s *Service) call(method string, in, out any) error {
@@ -177,6 +179,8 @@ func (s *Service) begin() error {
 
 // Re-save this provider's auth records so CPA's watcher refreshes model registrations.
 func (s *Service) refreshRegistrations() error {
+	s.credentialMu.Lock()
+	defer s.credentialMu.Unlock()
 	revision := sha256.Sum256(jsonBytes(s.config().Models))
 	s.mu.RLock()
 	credentials := make([]Credential, 0, len(s.creds))
@@ -188,7 +192,13 @@ func (s *Service) refreshRegistrations() error {
 		// CPA skips unchanged files. A model revision makes watcher refreshes reliable.
 		c.ModelRevision = hex.EncodeToString(revision[:])
 		c.RequestScopedErrors = requestErrorRules()
-		if e := s.call("host.auth.save", map[string]any{"name": c.ID + ".json", "json": json.RawMessage(jsonBytes(c))}, nil); e != nil {
+		s.mu.RLock()
+		filename := s.authFiles[c.ID]
+		s.mu.RUnlock()
+		if filename == "" {
+			filename = c.ID + ".json"
+		}
+		if e := s.call("host.auth.save", map[string]any{"name": filename, "json": json.RawMessage(jsonBytes(c))}, nil); e != nil {
 			return e
 		}
 	}
@@ -243,6 +253,9 @@ func (s *Service) parseAuth(raw json.RawMessage) (any, error) {
 	c.RequestScopedErrors = requestErrorRules()
 	s.mu.Lock()
 	s.creds[c.ID] = c
+	if r.FileName != "" {
+		s.authFiles[c.ID] = filepath.Base(r.FileName)
+	}
 	if r.Host.AuthDir != "" {
 		s.authDir = r.Host.AuthDir
 	}
@@ -258,19 +271,32 @@ func (s *Service) refreshAuth(raw json.RawMessage) (any, error) {
 	if e := json.Unmarshal(r.StorageJSON, &c); e != nil {
 		return nil, e
 	}
-	return map[string]any{"Auth": authData(c, c.ID+".json"), "NextRefreshAfter": time.Now().Add(365 * 24 * time.Hour)}, nil
+	s.mu.RLock()
+	if current, ok := s.creds[c.ID]; ok {
+		c = current
+	}
+	filename := s.authFiles[c.ID]
+	revoked := s.revoked[c.ID]
+	s.mu.RUnlock()
+	if revoked {
+		return nil, fail(401, "Cline Pass credential was removed")
+	}
+	if filename == "" {
+		filename = c.ID + ".json"
+	}
+	return map[string]any{"Auth": authData(c, filename), "NextRefreshAfter": time.Now().Add(365 * 24 * time.Hour)}, nil
 }
 func (s *Service) selectedCredential(r ExecutorRequest) (Credential, error) {
 	var c Credential
 	if len(r.StorageJSON) > 0 {
 		_ = json.Unmarshal(r.StorageJSON, &c)
 	}
-	if c.APIKey == "" {
-		s.mu.RLock()
-		c = s.creds[r.AuthID]
-		s.mu.RUnlock()
-	}
 	s.mu.RLock()
+	if current, ok := s.creds[c.ID]; ok {
+		c = current
+	} else if current, ok := s.creds[r.AuthID]; ok {
+		c = current
+	}
 	revoked := s.revoked[c.ID] || s.revoked[r.AuthID]
 	s.mu.RUnlock()
 	if c.APIKey == "" || c.Disabled || revoked {

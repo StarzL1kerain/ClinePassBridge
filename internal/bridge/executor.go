@@ -187,7 +187,7 @@ func (s *Service) readJSON(up upstreamStream) ([]byte, error) {
 	return b.Bytes(), nil
 }
 func (s *Service) newLog(r ExecutorRequest, c Credential, up string) LogEntry {
-	return LogEntry{ID: id(), Time: time.Now().UTC(), Model: r.Model, UpstreamModel: up, Stream: r.Stream, Provider: "unknown", ProviderSource: "not_reported", RequestedProvider: "automatic", PinResult: "automatic", Credential: c.Label, Attempts: []Attempt{}}
+	return LogEntry{ID: id(), Time: time.Now().UTC(), Model: r.Model, UpstreamModel: up, Stream: r.Stream, Provider: "unknown", ProviderSource: "not_reported", Credential: c.Label, Attempts: []Attempt{}}
 }
 func (s *Service) execute(r ExecutorRequest) (any, error) {
 	if err := s.begin(); err != nil {

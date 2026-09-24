@@ -24,7 +24,7 @@ func (s *Service) registerManagement(raw json.RawMessage) (any, error) {
 	for _, p := range []string{"models/refresh", "credentials"} {
 		routes = append(routes, map[string]string{"Method": "POST", "Path": apiBase + "/" + p})
 	}
-	for _, p := range []string{"models", "config"} {
+	for _, p := range []string{"models", "config", "credentials"} {
 		routes = append(routes, map[string]string{"Method": "PUT", "Path": apiBase + "/" + p})
 	}
 	routes = append(routes, map[string]string{"Method": "DELETE", "Path": apiBase + "/credentials"})
@@ -44,6 +44,11 @@ func (s *Service) management(raw json.RawMessage) (any, error) {
 			return nil, e
 		}
 		b = []byte(strings.ReplaceAll(string(b), "__PASSBRIDGE_API_BASE__", apiBase))
+		authJS, err := ui.ReadFile("ui/cpa-auth.js")
+		if err != nil {
+			return nil, err
+		}
+		b = []byte(strings.ReplaceAll(string(b), "/*__CPA_AUTH_COMPAT__*/", string(authJS)))
 		return ManagementResponse{StatusCode: 200, Headers: http.Header{"Content-Type": []string{"text/html; charset=utf-8"}, "Cache-Control": []string{"no-store"}, "X-Content-Type-Options": []string{"nosniff"}}, Body: b}, nil
 	}
 	if !strings.HasPrefix(r.Path, apiBase+"/") {
@@ -55,7 +60,7 @@ func (s *Service) management(raw json.RawMessage) (any, error) {
 		s.mu.RLock()
 		logError := s.logWriteError
 		s.mu.RUnlock()
-		return managementJSON(200, map[string]any{"version": Version, "log_persistence_error": logError, "credential_count": len(s.credentials()), "model_count": len(s.config().Models), "pinning": map[string]any{"mode": "automatic", "provider": "", "verified": false, "available": false, "message": "2026-09-24 DeepSeek 对照实测：不存在的 provider 仍成功并路由到 deepseek，当前钉上游参数被忽略"}, "pinning_state": "当前路径已证实忽略钉上游限制，使用自动路由；实际上游来自响应元数据"})
+		return managementJSON(200, map[string]any{"version": Version, "log_persistence_error": logError, "credential_count": len(s.credentials()), "model_count": len(s.config().Models)})
 	case "GET /logs":
 		return s.logsResponse(r)
 	case "GET /config":
@@ -98,6 +103,8 @@ func (s *Service) management(raw json.RawMessage) (any, error) {
 		return managementJSON(200, map[string]any{"items": s.credentials()})
 	case "POST /credentials":
 		return s.importCredential(r)
+	case "PUT /credentials":
+		return s.updateCredential(r)
 	case "DELETE /credentials":
 		return s.deleteCredential(r.Query.Get("id"))
 	default:
@@ -160,6 +167,8 @@ func (s *Service) logsResponse(r ManagementRequest) (any, error) {
 	return managementJSON(200, map[string]any{"items": filtered[offset:end], "total": total})
 }
 func (s *Service) importCredential(r ManagementRequest) (any, error) {
+	s.credentialMu.Lock()
+	defer s.credentialMu.Unlock()
 	var in struct {
 		Label  string `json:"label"`
 		APIKey string `json:"api_key"`
@@ -186,13 +195,65 @@ func (s *Service) importCredential(r ManagementRequest) (any, error) {
 	}
 	s.mu.Lock()
 	s.creds[c.ID] = c
+	s.authFiles[c.ID] = c.ID + ".json"
 	if saved.Path != "" {
 		s.authDir = filepath.Dir(saved.Path)
 	}
 	s.mu.Unlock()
 	return managementJSON(201, map[string]any{"id": c.ID, "label": c.Label, "enabled": true})
 }
+func (s *Service) updateCredential(r ManagementRequest) (any, error) {
+	s.credentialMu.Lock()
+	defer s.credentialMu.Unlock()
+	var in struct {
+		Label  *string `json:"label"`
+		APIKey *string `json:"api_key"`
+	}
+	if e := json.Unmarshal(r.Body, &in); e != nil {
+		return managementJSON(400, map[string]any{"error": "invalid credential JSON"})
+	}
+	id := r.Query.Get("id")
+	s.mu.RLock()
+	c, ok := s.creds[id]
+	filename := s.authFiles[id]
+	s.mu.RUnlock()
+	if !ok {
+		return managementJSON(404, map[string]any{"error": "credential not found"})
+	}
+	if in.Label != nil {
+		c.Label = strings.TrimSpace(*in.Label)
+		if len(c.Label) > 100 {
+			return managementJSON(400, map[string]any{"error": "label exceeds 100 characters"})
+		}
+		if c.Label == "" {
+			c.Label = "Cline Pass"
+		}
+	}
+	if in.APIKey != nil && strings.TrimSpace(*in.APIKey) != "" {
+		key := strings.TrimSpace(*in.APIKey)
+		if len(key) < 8 || strings.ContainsAny(key, "\r\n") {
+			return managementJSON(400, map[string]any{"error": "invalid API key"})
+		}
+		c.APIKey = key
+	}
+	if filename == "" {
+		filename = c.ID + ".json"
+	}
+	if filepath.Base(filename) != filename || strings.ContainsAny(filename, "/\\") {
+		return managementJSON(400, map[string]any{"error": "invalid credential filename"})
+	}
+	c.RequestScopedErrors = requestErrorRules()
+	if e := s.call("host.auth.save", map[string]any{"name": filename, "json": json.RawMessage(jsonBytes(c))}, nil); e != nil {
+		return managementJSON(500, map[string]any{"error": "credential persistence failed"})
+	}
+	s.mu.Lock()
+	s.creds[id] = c
+	s.mu.Unlock()
+	return managementJSON(200, map[string]any{"id": c.ID, "label": c.Label, "enabled": !c.Disabled})
+}
 func (s *Service) deleteCredential(credentialID string) (any, error) {
+	s.credentialMu.Lock()
+	defer s.credentialMu.Unlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	c, ok := s.creds[credentialID]
@@ -205,7 +266,14 @@ func (s *Service) deleteCredential(credentialID string) (any, error) {
 	if filepath.Base(c.ID) != c.ID || strings.ContainsAny(c.ID, "/\\") {
 		return managementJSON(400, map[string]any{"error": "invalid credential ID"})
 	}
-	path := filepath.Join(s.authDir, c.ID+".json")
+	filename := s.authFiles[c.ID]
+	if filename == "" {
+		filename = c.ID + ".json"
+	}
+	if filepath.Base(filename) != filename || strings.ContainsAny(filename, "/\\") {
+		return managementJSON(400, map[string]any{"error": "invalid credential filename"})
+	}
+	path := filepath.Join(s.authDir, filename)
 	b, e := os.ReadFile(path)
 	if e != nil {
 		return managementJSON(409, map[string]any{"error": "credential file missing"})
@@ -218,6 +286,7 @@ func (s *Service) deleteCredential(credentialID string) (any, error) {
 		return managementJSON(500, map[string]any{"error": "credential removal failed"})
 	}
 	delete(s.creds, credentialID)
+	delete(s.authFiles, credentialID)
 	s.revoked[credentialID] = true
 	return managementJSON(200, map[string]any{"deleted": true})
 }
@@ -243,22 +312,20 @@ func (s *Service) refreshModels(callbackID string) ([]Model, error) {
 	if len(candidates) == 0 {
 		return nil, fail(502, "Cline catalog returned no clinePass offers")
 	}
-	cfg := s.config()
+	models := []Model{}
 	seen := map[string]bool{}
-	for _, m := range cfg.Models {
-		seen[m.ID] = true
-	}
 	for _, v := range candidates {
 		m := object(v)
 		modelID := str(m["id"])
 		if !strings.HasPrefix(modelID, "cline-pass/") || seen[modelID] {
 			continue
 		}
-		cfg.Models = append(cfg.Models, Model{ID: modelID, UpstreamID: modelID})
+		upstream, err := normalizeModel(modelID)
+		if err != nil {
+			continue
+		}
+		models = append(models, Model{ID: strings.TrimPrefix(upstream, "cline-pass/"), UpstreamID: upstream})
 		seen[modelID] = true
 	}
-	if e = s.saveConfig(cfg); e != nil {
-		return nil, e
-	}
-	return cfg.Models, nil
+	return models, nil
 }

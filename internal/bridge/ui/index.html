@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
+  <meta name="cpa-api-base" content="__PASSBRIDGE_API_BASE__">
   <title>ClinePassBridge · 管理</title>
   <style>
     :root {
@@ -48,7 +49,7 @@
     .badge.good { background: color-mix(in srgb, var(--success) 12%, var(--surface)); color: var(--success); }
     .badge.warn { background: color-mix(in srgb, var(--warn) 14%, var(--surface)); color: var(--warn); }
     .badge.bad { background: color-mix(in srgb, var(--danger) 12%, var(--surface)); color: var(--danger); }
-    .summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+    .summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
     .summary-item { padding: 13px 16px; background: var(--surface); min-width: 0; }
     .summary-label { font-size: 11px; color: var(--muted); margin-bottom: 3px; }
     .summary-value { font-weight: 700; font-size: 16px; overflow-wrap: anywhere; }
@@ -99,8 +100,10 @@
     .panel { min-width: 0; border-top: 1px solid var(--line); padding-top: 15px; }
     .panel-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 14px; }
     .panel-hint { color: var(--muted); font-size: 12px; margin-top: 3px; }
-    .model-row, .credential-row { justify-content: space-between; border-bottom: 1px solid var(--line); padding: 11px 0; min-width: 0; }
-    .model-row:last-child, .credential-row:last-child { border-bottom: none; }
+    .model-row { justify-content: space-between; border-bottom: 1px solid var(--line); padding: 11px 0; min-width: 0; }
+    .model-row:last-child { border-bottom: none; }
+    #credentialList { display: grid; gap: 10px; }
+    .credential-row { justify-content: space-between; border: 1px solid var(--line); border-radius: 6px; padding: 14px; min-width: 0; background: var(--surface); }
     .model-main, .credential-main { min-width: 0; overflow-wrap: anywhere; }
     .row-actions { display: flex; gap: 5px; flex: none; }
     .tagline { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 5px; }
@@ -119,6 +122,17 @@
     dialog h2 { margin-bottom: 6px; }
     dialog p { color: var(--muted); font-size: 12px; }
     .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+    .candidate-dialog { max-width: min(620px, calc(100vw - 32px)); }
+    .candidate-tools { display: flex; gap: 8px; align-items: center; margin: 18px 0 10px; }
+    .candidate-tools .control { flex: 1; }
+    .candidate-list { max-height: min(52vh, 480px); overflow-y: auto; border: 1px solid var(--line); border-radius: 6px; }
+    .candidate-row { display: flex; align-items: center; gap: 12px; padding: 11px 12px; cursor: pointer; min-width: 0; }
+    .candidate-row + .candidate-row { border-top: 1px solid var(--line); }
+    .candidate-row:hover { background: var(--surface-2); }
+    .candidate-row:has(input:disabled) { cursor: default; opacity: .65; }
+    .candidate-row input { width: 18px; height: 18px; accent-color: var(--accent); flex: none; }
+    .candidate-row .model-main { flex: 1; }
+    .candidate-empty { padding: 22px 12px; text-align: center; color: var(--muted); }
     .toast { position: fixed; right: 18px; bottom: 18px; max-width: min(420px, calc(100vw - 36px)); border: 1px solid var(--line); border-radius: 6px; padding: 10px 13px; background: var(--ink); color: var(--surface); box-shadow: var(--shadow); z-index: 10; }
     @media (prefers-color-scheme: dark) {
       :root { --bg: #111a1d; --surface: #1b262a; --surface-2: #202e32; --ink: #edf3f3; --muted: #a4b4b8; --line: #344348; --accent: #54c4b6; --accent-ink: #0a2525; --success: #67d5a6; --warn: #e7b467; --danger: #f18d89; --focus: #8ae6dc; --code-bg: #2b3b40; --shadow: 0 8px 24px rgba(0,0,0,.12); }
@@ -135,7 +149,6 @@
     }
     @media (max-width: 740px) {
       .shell { padding-top: 14px; }
-      .summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .config-grid { grid-template-columns: 1fr; }
       .detail-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .attempt { grid-template-columns: 24px minmax(80px, 1fr) minmax(80px, 1fr); }
@@ -162,6 +175,9 @@
       .pagination { justify-content: space-between; }
       .topbar { gap: 6px; }
       .brand { font-size: 13px; }
+      .credential-row { align-items: flex-start; flex-wrap: wrap; }
+      .candidate-tools { flex-wrap: wrap; }
+      .candidate-tools .control { flex-basis: 100%; }
     }
   </style>
 </head>
@@ -176,10 +192,7 @@
     <div class="summary" aria-label="服务概览">
       <div class="summary-item"><div class="summary-label">凭据</div><div class="summary-value" id="statCredentials">--</div><div class="summary-note">已导入</div></div>
       <div class="summary-item"><div class="summary-label">模型映射</div><div class="summary-value" id="statModels">--</div><div class="summary-note">当前注册</div></div>
-      <div class="summary-item"><div class="summary-label">上游钉选</div><div class="summary-value" id="statPin">当前不可用</div><div class="summary-note" id="statPinNote">已停用</div></div>
-      <div class="summary-item"><div class="summary-label">证据状态</div><div class="summary-value" id="statEvidence">已证实失效</div><div class="summary-note">实际命中以单次日志为准</div></div>
     </div>
-    <div class="notice" id="pinNotice" hidden></div>
     <div class="notice error" id="logPersistenceError" role="alert" hidden></div>
     <div class="notice error" id="globalError" role="alert" hidden></div>
 
@@ -196,7 +209,7 @@
         <input class="control provider-filter" id="providerFilter" list="providerOptions" placeholder="实际渠道" aria-label="按实际渠道筛选"><datalist id="providerOptions"></datalist>
         <span class="count" id="logCount">-- 条</span>
       </div>
-      <div class="log-head" aria-hidden="true"><span>时间 / 请求</span><span>客户端模型 / 上游</span><span>结果</span><span>实际 / 期望渠道</span><span>延时</span><span>用量</span><span></span></div>
+      <div class="log-head" aria-hidden="true"><span>时间 / 请求</span><span>客户端模型 / 上游</span><span>结果</span><span>实际上游</span><span>延时</span><span>用量</span><span></span></div>
       <div class="log-list" id="logList" aria-live="polite"><div class="empty">正在读取日志…</div></div>
       <div class="pagination"><button class="button compact" id="prevPage" type="button">上一页</button><span id="pageInfo">第 1 页</span><button class="button compact" id="nextPage" type="button">下一页</button></div>
     </section>
@@ -211,19 +224,13 @@
             <strong id="modelFormTitle">添加模型映射</strong>
             <div class="field"><label for="modelId">客户端模型名称</label><input class="control mono" id="modelId" required placeholder="例如 deepseek-v4.1-flash" autocomplete="off"></div>
             <div class="field"><label for="upstreamId">Cline Pass 上游模型</label><input class="control mono" id="upstreamId" required placeholder="deepseek-v4.1-flash 或 cline-pass/deepseek-v4.1-flash" autocomplete="off"><p class="panel-hint">保存时自动补全并去重 cline-pass/ 前缀。</p></div>
-            <div class="field"><label for="modelProviderObservation">目录观察到的渠道（只读）</label><select class="control" id="modelProviderObservation" aria-readonly="true"><option>尚无目录证据</option></select></div>
             <div class="form-foot"><button class="button" id="cancelModelEdit" type="button" hidden>取消编辑</button><button class="button primary" id="saveModel" type="submit">添加模型</button></div>
           </form>
           <p class="inline-state" id="modelState"></p>
         </div>
         <div class="panel">
-          <div class="panel-head"><div><h2>凭据</h2><p class="panel-hint">仅显示名称和配置状态</p></div></div>
+          <div class="panel-head"><div><h2>凭据</h2><p class="panel-hint">仅显示名称和配置状态</p></div><button class="button compact primary" id="openCredential" type="button">添加凭据</button></div>
           <div id="credentialList" aria-live="polite"><div class="empty">正在读取凭据…</div></div>
-          <form class="form-stack" id="credentialForm" autocomplete="off">
-            <div class="field"><label for="credentialLabel">名称</label><input class="control" id="credentialLabel" name="label" maxlength="80" required placeholder="例如：主账号"></div>
-            <div class="field"><label for="credentialKey">API Key</label><input class="control" id="credentialKey" name="api_key" type="password" autocomplete="new-password" required placeholder="输入后仅用于本次提交"></div>
-            <div class="form-foot"><button class="button primary" id="addCredential" type="submit">导入凭据</button></div>
-          </form>
           <p class="inline-state" id="credentialState"></p>
         </div>
         <div class="panel">
@@ -236,31 +243,46 @@
           </form>
           <p class="inline-state" id="settingsState"></p>
         </div>
-        <div class="panel">
-          <div class="panel-head"><div><h2>上游钉选</h2><p class="panel-hint">当前不可用</p></div><span class="badge bad">已停用</span></div>
-          <p class="notice">2026-09-24 对照验证：自动、仅指定 deepseek、仅指定不存在渠道三种配置均返回 200，实际渠道均为 deepseek。钉选设置已停用；实际渠道仍按请求日志中的证据显示。</p>
-        </div>
       </div>
     </section>
   </main>
 
   <dialog id="authDialog" aria-labelledby="authTitle">
     <h2 id="authTitle">管理 API 鉴权</h2>
-    <p>密钥仅保留在当前页面内存中，刷新页面后清除。</p>
+    <p>未找到此 CPA 的已保存登录。可在同源管理页登录并选择“记住密码”，或在此临时输入管理密钥。</p>
     <form id="authForm" class="form-stack" method="dialog" autocomplete="off">
       <div class="field"><label for="authType">请求头</label><select class="control" id="authType"><option value="bearer">Authorization: Bearer</option><option value="x-management-key">X-Management-Key</option></select></div>
       <div class="field"><label for="authKey">管理密钥</label><input class="control" id="authKey" type="password" autocomplete="new-password" placeholder="粘贴管理密钥"></div>
       <div class="dialog-actions"><button class="button danger" id="clearAuth" type="button">清除密钥</button><button class="button" id="closeAuth" type="button">取消</button><button class="button primary" type="submit">应用</button></div>
     </form>
   </dialog>
+  <dialog class="candidate-dialog" id="modelCandidateDialog" aria-labelledby="modelCandidateTitle">
+    <h2 id="modelCandidateTitle">选择要添加的模型</h2>
+    <p>勾选后确认添加到现有映射。</p>
+    <div class="candidate-tools"><input class="control" id="candidateSearch" type="search" placeholder="搜索模型" aria-label="搜索候选模型"><button class="button compact" id="selectCandidates" type="button">全选可选</button></div>
+    <div class="candidate-list" id="candidateList" aria-live="polite"></div>
+    <p class="inline-state" id="candidateState" role="status"></p>
+    <div class="dialog-actions"><button class="button" id="cancelCandidates" type="button">取消</button><button class="button primary" id="confirmCandidates" type="button" disabled>添加所选</button></div>
+  </dialog>
+  <dialog id="credentialDialog" aria-labelledby="credentialDialogTitle">
+    <h2 id="credentialDialogTitle">添加凭据</h2>
+    <p id="credentialDialogHint">输入名称和 API Key。</p>
+    <form class="form-stack" id="credentialForm" autocomplete="off">
+      <div class="field"><label for="credentialLabel">名称</label><input class="control" id="credentialLabel" name="label" maxlength="80" required placeholder="例如：主账号"></div>
+      <div class="field"><label for="credentialKey">API Key</label><input class="control" id="credentialKey" name="api_key" type="password" autocomplete="new-password" required placeholder="输入新的 API Key"></div>
+      <p class="inline-state" id="credentialDialogState" role="alert"></p>
+      <div class="dialog-actions"><button class="button" id="cancelCredential" type="button">取消</button><button class="button primary" id="saveCredential" type="submit">添加凭据</button></div>
+    </form>
+  </dialog>
   <div class="toast" id="toast" role="status" hidden></div>
 
   <script>
+    /*__CPA_AUTH_COMPAT__*/
     'use strict';
     const API_BASE = '__PASSBRIDGE_API_BASE__';
     const PAGE_SIZE = 50;
     const $ = (id) => document.getElementById(id);
-    const state = { key: '', authType: 'bearer', page: 0, total: 0, logsController: null, providers: new Set(), models: [], editingModelIndex: -1, config: null, toastTimer: 0 };
+    const state = { key: '', authType: 'bearer', page: 0, total: 0, logsController: null, providers: new Set(), models: [], editingModelIndex: -1, config: null, toastTimer: 0, modelCandidates: [], selectedCandidates: new Set(), candidateBusy: false, editingCredentialId: '', credentialBusy: false };
     const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
     const present = (value) => value !== null && value !== undefined && String(value).trim() !== '';
     const shown = (value, fallback = '未记录') => present(value) ? esc(value) : fallback;
@@ -286,7 +308,11 @@
       const headers = { Accept: 'application/json' };
       if (options.body !== undefined) headers['Content-Type'] = 'application/json';
       if (state.key) headers[state.authType === 'x-management-key' ? 'X-Management-Key' : 'Authorization'] = state.authType === 'x-management-key' ? state.key : `Bearer ${state.key}`;
-      if (typeof window.PassBridgeAuthHeaders === 'function') Object.assign(headers, await window.PassBridgeAuthHeaders());
+      if (!state.key && typeof window.PassBridgeAuthHeaders === 'function') {
+        const savedHeaders = await window.PassBridgeAuthHeaders();
+        Object.assign(headers, savedHeaders);
+        if (savedHeaders.Authorization) $('authButton').textContent = '使用 CPA 登录';
+      }
       const response = await fetch(apiUrl(path, options.query), { method: options.method || 'GET', headers, body: options.body === undefined ? undefined : JSON.stringify(options.body), credentials: 'same-origin', cache: 'no-store', signal: options.signal });
       if (!response.ok) {
         if ((response.status === 401 || response.status === 403) && !$('authDialog').open) $('authDialog').showModal();
@@ -313,47 +339,26 @@
       const provider = String(value ?? '').trim();
       return provider.toLowerCase() === 'unknown' ? '' : provider;
     }
-    function requestedProviderLabel(value) {
-      if (String(value ?? '').trim().toLowerCase() === 'automatic') return '自动路由（未指定渠道）';
-      return present(value) ? String(value) : '未指定';
-    }
-    function sourceLabel(value, provider) {
-      return !actualProvider(provider) || !present(value) || String(value).trim().toLowerCase() === 'not_reported' ? '未报告' : String(value);
-    }
-    function matchInfo(log) {
-      const actual = actualProvider(log.provider);
-      const requested = String(log.requested_provider ?? '').trim();
-      if (!actual) return { label: '无法判定', cls: 'warn' };
-      if (requested.toLowerCase() === 'automatic') return { label: '自动路由', cls: '' };
-      if (!requested) return { label: '未指定', cls: '' };
-      return actual.toLowerCase() === requested.toLowerCase()
-        ? { label: '一致', cls: 'good' } : { label: '不一致', cls: 'bad' };
-    }
     function datum(label, value, fallback = '未记录') { return `<div><div class="datum-label">${label}</div><div class="datum-value">${shown(value, fallback)}</div></div>`; }
     function logMarkup(log) {
       const status = statusInfo(log.status);
-      const match = matchInfo(log);
       const actual = shown(actualProvider(log.provider), '未知');
-      const source = sourceLabel(log.provider_source, log.provider);
       const attempts = Array.isArray(log.attempts) ? log.attempts : [];
       const attemptMarkup = attempts.length ? attempts.map((attempt, index) => {
         const attemptStatus = statusInfo(attempt.status);
-        return `<div class="attempt"><span class="mono">${index + 1}.</span><span class="badge ${attemptStatus.cls}">${attemptStatus.label}</span><span><strong>${shown(actualProvider(attempt.provider), '未知')}</strong><br><span class="subtext">来源：${esc(sourceLabel(attempt.provider_source, attempt.provider))}</span></span><span>${ms(attempt.duration_ms)}</span><span class="error-text">${shown(attempt.error, '—')}</span></div>`;
+        return `<div class="attempt"><span class="mono">${index + 1}.</span><span class="badge ${attemptStatus.cls}">${attemptStatus.label}</span><strong>${shown(actualProvider(attempt.provider), '未知')}</strong><span>${ms(attempt.duration_ms)}</span><span class="error-text">${shown(attempt.error, '—')}</span></div>`;
       }).join('') : '<div class="subtext">无尝试明细</div>';
       return `<details class="log-entry" data-id="${esc(log.id)}"><summary class="row-main">
         <div class="cell"><span class="cell-label">时间 / 请求</span><div class="primary-text mono">${formatTime(log.time)}</div><div class="subtext mono">${shown(log.id, '无 ID')}</div></div>
         <div class="cell"><span class="cell-label">客户端模型 / 上游</span><div class="primary-text mono">${shown(log.model)}</div><div class="subtext mono">${shown(log.upstream_model)}</div></div>
         <div class="cell"><span class="cell-label">结果</span><span class="badge ${status.cls}">${status.label}</span><div class="subtext">${log.stream === true ? '流式' : log.stream === false ? '非流式' : '模式未知'}</div></div>
-        <div class="cell"><span class="cell-label">实际 / 期望渠道</span><div class="primary-text">${actual} <span class="badge ${match.cls}">${match.label}</span></div><div class="subtext">期望：${esc(requestedProviderLabel(log.requested_provider))}</div></div>
+        <div class="cell"><span class="cell-label">实际上游</span><div class="primary-text">${actual}</div></div>
         <div class="cell"><span class="cell-label">延时 / 首字</span><div>${ms(log.duration_ms)}</div><div class="subtext">首字 ${ttft(log)}</div></div>
         <div class="cell"><span class="cell-label">用量 / 尝试</span><div>${number(log.prompt_tokens)} / ${number(log.completion_tokens)}</div><div class="subtext">缓存 ${number(log.cached_tokens)} · ${attempts.length} 次</div></div>
         <span class="chevron" aria-hidden="true">›</span></summary>
-        <div class="detail"><div class="detail-head"><strong>请求证据</strong><span class="badge ${match.cls}">${match.label}</span></div>
+        <div class="detail"><div class="detail-head"><strong>请求详情</strong></div>
           <div class="detail-grid">
-            ${datum('实际渠道', actualProvider(log.provider), '未知')}
-            <div><div class="datum-label">实际渠道证据字段路径</div><div class="datum-value">${source === '未报告' ? '未报告' : `<code class="source">${esc(source)}</code>`}</div></div>
-            ${datum('期望渠道', requestedProviderLabel(log.requested_provider))}
-            ${datum('钉选结果记录', log.pin_result)}
+            ${datum('实际上游', actualProvider(log.provider), '未知')}
             ${datum('首字时间', ttft(log), '—')}
             ${datum('总耗时', ms(log.duration_ms), '--')}
             ${datum('输入 tokens', number(log.prompt_tokens), '--')}
@@ -398,37 +403,26 @@
       const persistenceError = present(data?.log_persistence_error) ? String(data.log_persistence_error) : '';
       $('logPersistenceError').textContent = persistenceError ? `日志持久化失败：${persistenceError}。当前日志可能仅保留在内存中。` : '';
       $('logPersistenceError').hidden = !persistenceError;
-      const evidence = data?.pinning_state;
-      $('statPin').textContent = '当前不可用';
-      $('statPinNote').textContent = '已停用';
-      $('statEvidence').textContent = '已证实失效';
-      const stateText = typeof evidence === 'string' ? evidence : evidence && typeof evidence === 'object' ? (evidence.message || evidence.reason || evidence.status || '') : '';
-      $('pinNotice').textContent = `上游钉选当前不可用。${stateText ? `状态：${stateText}。` : ''}请以日志中的实际渠道及证据字段为准。`;
-      $('pinNotice').hidden = false;
     }
     function normalizeUpstream(value) {
       const name = String(value || '').trim().replace(/^(?:cline-pass\/)+/gi, '');
       return name ? `cline-pass/${name}` : '';
     }
-    function renderModelObservation(providers = []) {
-      $('modelProviderObservation').innerHTML = providers.length
-        ? providers.map((provider) => `<option>${esc(provider)}</option>`).join('')
-        : '<option>尚无目录证据</option>';
-    }
+    const displayModelId = (value) => String(value || '').replace(/^(?:cline-pass\/)+/gi, '');
     function resetModelForm() {
       state.editingModelIndex = -1;
       $('modelForm').reset();
       $('modelFormTitle').textContent = '添加模型映射';
       $('saveModel').textContent = '添加模型';
       $('cancelModelEdit').hidden = true;
-      renderModelObservation();
     }
     function renderModels(data) {
       state.models = Array.isArray(data?.models) ? data.models.map((model) => ({ id: model.id, upstream_id: model.upstream_id, providers: Array.isArray(model.providers) ? [...model.providers] : [] })) : [];
       for (const model of state.models) for (const provider of model.providers) if (present(provider)) state.providers.add(String(provider));
       renderProviderOptions();
-      $('modelList').innerHTML = state.models.length ? state.models.map((model, index) => `<div class="model-row"><div class="model-main"><div class="primary-text mono">${shown(model.id)}</div><div class="subtext mono">→ ${shown(model.upstream_id)}</div><div class="tagline">${model.providers.length ? model.providers.map((provider) => `<span class="badge">${esc(provider)}</span>`).join('') : '<span class="badge">无目录渠道证据</span>'}</div></div><div class="row-actions"><button class="button compact edit-model" type="button" data-index="${index}">编辑</button><button class="button compact danger delete-model" type="button" data-index="${index}">删除</button></div></div>`).join('') : '<div class="empty">暂无模型映射</div>';
+      $('modelList').innerHTML = state.models.length ? state.models.map((model, index) => `<div class="model-row"><div class="model-main"><div class="primary-text mono">${shown(displayModelId(model.id))}</div><div class="subtext mono">→ ${shown(model.upstream_id)}</div></div><div class="row-actions"><button class="button compact edit-model" type="button" data-index="${index}">编辑</button><button class="button compact danger delete-model" type="button" data-index="${index}">删除</button></div></div>`).join('') : '<div class="empty">暂无模型映射</div>';
       if (state.editingModelIndex >= state.models.length) resetModelForm();
+      if ($('modelCandidateDialog').open) renderCandidateList();
     }
     async function saveModels(next) {
       await api('/models', { method: 'PUT', body: { models: next } });
@@ -436,9 +430,26 @@
       resetModelForm();
       await loadStatus();
     }
+    function updateCandidateCount() {
+      const existing = new Set(state.models.map((model) => String(model.id || '').toLowerCase()));
+      const count = [...state.selectedCandidates].filter((id) => !existing.has(id)).length;
+      $('confirmCandidates').textContent = count ? `添加所选 (${count})` : '添加所选';
+      $('confirmCandidates').disabled = !count || state.candidateBusy;
+    }
+    function renderCandidateList() {
+      const existing = new Set(state.models.map((model) => String(model.id || '').toLowerCase()));
+      const query = $('candidateSearch').value.trim().toLowerCase();
+      const visible = state.modelCandidates.map((model, index) => ({ ...model, index })).filter((model) => !query || model.id.toLowerCase().includes(query) || model.upstream_id.toLowerCase().includes(query));
+      $('candidateList').innerHTML = visible.length ? visible.map((model) => {
+        const added = existing.has(model.id.toLowerCase());
+        return `<label class="candidate-row"><input class="candidate-check" type="checkbox" data-index="${model.index}" ${added || state.candidateBusy ? 'disabled' : ''} ${!added && state.selectedCandidates.has(model.id.toLowerCase()) ? 'checked' : ''}><span class="model-main"><strong class="mono">${esc(model.id)}</strong><span class="subtext mono" style="display:block">→ ${esc(model.upstream_id)}</span></span>${added ? '<span class="badge">已添加</span>' : ''}</label>`;
+      }).join('') : '<div class="candidate-empty">没有匹配的模型</div>';
+      updateCandidateCount();
+      $('selectCandidates').disabled = state.candidateBusy || !visible.some((model) => !existing.has(model.id.toLowerCase()));
+    }
     function renderCredentials(data) {
       const items = Array.isArray(data?.items) ? data.items : [];
-      $('credentialList').innerHTML = items.length ? items.map((item) => `<div class="credential-row"><div class="credential-main"><div class="primary-text">${shown(item.label, '未命名')}</div><div class="subtext mono">${shown(item.id, '无 ID')} · ${item.enabled === false ? '已停用' : '已配置'}</div></div><button class="button compact danger remove-credential" type="button" data-id="${esc(item.id)}" data-label="${esc(item.label)}">删除</button></div>`).join('') : '<div class="empty">尚未导入凭据</div>';
+      $('credentialList').innerHTML = items.length ? items.map((item) => `<div class="credential-row"><div class="credential-main"><div class="primary-text">${shown(item.label, '未命名')}</div><div class="subtext mono">${shown(item.id, '无 ID')} · ${item.enabled === false ? '已停用' : '已配置'}</div></div><div class="row-actions"><button class="button compact edit-credential" type="button" data-id="${esc(item.id)}" data-label="${esc(item.label)}">编辑</button><button class="button compact danger remove-credential" type="button" data-id="${esc(item.id)}" data-label="${esc(item.label)}">删除</button></div></div>`).join('') : '<div class="empty">尚未导入凭据</div>';
     }
     async function loadConfig() {
       $('refreshConfig').disabled = true;
@@ -492,9 +503,77 @@
     $('refreshModels').addEventListener('click', async () => {
       $('refreshModels').disabled = true;
       $('modelState').textContent = '正在刷新模型…';
-      try { await api('/models/refresh', { method: 'POST' }); renderModels(await api('/models')); resetModelForm(); await loadStatus(); $('modelState').textContent = '模型目录已刷新；目录结果不代表订阅资格'; }
+      try {
+        const result = await api('/models/refresh', { method: 'POST' });
+        if (!Array.isArray(result?.models)) throw new Error('模型目录响应缺少候选列表');
+        renderModels(await api('/models'));
+        const unique = new Set();
+        state.modelCandidates = result.models.map((model) => ({ id: displayModelId(model?.id).trim(), upstream_id: normalizeUpstream(model?.upstream_id) })).filter((model) => {
+          const key = model.id.toLowerCase();
+          if (!model.id || !model.upstream_id || unique.has(key)) return false;
+          unique.add(key);
+          return true;
+        });
+        state.selectedCandidates.clear();
+        $('candidateSearch').value = '';
+        $('candidateState').textContent = '';
+        renderCandidateList();
+        $('modelCandidateDialog').showModal();
+        $('candidateSearch').focus();
+        $('modelState').textContent = '';
+      }
       catch (error) { $('modelState').textContent = `刷新失败：${error.message}`; }
       finally { $('refreshModels').disabled = false; }
+    });
+    $('candidateSearch').addEventListener('input', renderCandidateList);
+    $('candidateList').addEventListener('change', (event) => {
+      const checkbox = event.target.closest('.candidate-check');
+      if (!checkbox) return;
+      const id = state.modelCandidates[Number(checkbox.dataset.index)]?.id.toLowerCase();
+      if (!id) return;
+      if (checkbox.checked) state.selectedCandidates.add(id); else state.selectedCandidates.delete(id);
+      updateCandidateCount();
+    });
+    $('selectCandidates').addEventListener('click', () => {
+      const query = $('candidateSearch').value.trim().toLowerCase();
+      const existing = new Set(state.models.map((model) => String(model.id || '').toLowerCase()));
+      for (const model of state.modelCandidates) if (!existing.has(model.id.toLowerCase()) && (!query || model.id.toLowerCase().includes(query) || model.upstream_id.toLowerCase().includes(query))) state.selectedCandidates.add(model.id.toLowerCase());
+      renderCandidateList();
+    });
+    $('cancelCandidates').addEventListener('click', () => $('modelCandidateDialog').close());
+    $('modelCandidateDialog').addEventListener('cancel', (event) => { if (state.candidateBusy) event.preventDefault(); });
+    $('modelCandidateDialog').addEventListener('close', () => {
+      state.modelCandidates = [];
+      state.selectedCandidates.clear();
+      $('candidateList').replaceChildren();
+      $('candidateSearch').value = '';
+      $('candidateState').textContent = '';
+    });
+    $('confirmCandidates').addEventListener('click', async () => {
+      if (!state.selectedCandidates.size || state.candidateBusy) return;
+      state.candidateBusy = true;
+      $('cancelCandidates').disabled = true;
+      $('candidateState').textContent = '正在添加模型…';
+      renderCandidateList();
+      try {
+        const current = await api('/models');
+        if (!Array.isArray(current?.models)) throw new Error('现有模型列表读取失败');
+        const existing = current.models;
+        const ids = new Set(existing.map((model) => String(model.id || '').toLowerCase()));
+        const additions = state.modelCandidates.filter((model) => state.selectedCandidates.has(model.id.toLowerCase()) && !ids.has(model.id.toLowerCase()));
+        if (!additions.length) {
+          renderModels(current);
+          $('candidateState').textContent = '所选模型均已添加';
+          return;
+        }
+        const saved = await api('/models', { method: 'PUT', body: { models: [...existing, ...additions] } });
+        renderModels(Array.isArray(saved?.models) ? saved : { models: [...existing, ...additions] });
+        resetModelForm();
+        $('modelCandidateDialog').close();
+        $('modelState').textContent = `已添加 ${additions.length} 个模型`;
+        loadStatus().catch((error) => globalError(`状态刷新失败：${error.message}`));
+      } catch (error) { $('candidateState').textContent = `添加失败：${error.message}`; }
+      finally { state.candidateBusy = false; $('cancelCandidates').disabled = false; renderCandidateList(); }
     });
     $('cancelModelEdit').addEventListener('click', resetModelForm);
     $('modelList').addEventListener('click', async (event) => {
@@ -509,7 +588,6 @@
         state.editingModelIndex = index;
         $('modelId').value = model.id || '';
         $('upstreamId').value = model.upstream_id || '';
-        renderModelObservation(model.providers);
         $('modelFormTitle').textContent = '编辑模型映射';
         $('saveModel').textContent = '保存映射';
         $('cancelModelEdit').hidden = false;
@@ -553,19 +631,57 @@
       catch (error) { $('settingsState').textContent = `保存失败：${error.message}`; }
       finally { $('saveSettings').disabled = false; }
     });
+    function openCredentialDialog(id = '', label = '') {
+      state.editingCredentialId = id;
+      $('credentialForm').reset();
+      $('credentialLabel').value = label;
+      $('credentialKey').required = !id;
+      $('credentialKey').placeholder = id ? '留空保持原有 Key' : '输入新的 API Key';
+      $('credentialDialogTitle').textContent = id ? '编辑凭据' : '添加凭据';
+      $('credentialDialogHint').textContent = id ? '留空 API Key 仅更新名称。' : '输入名称和 API Key。';
+      $('saveCredential').textContent = id ? '保存凭据' : '添加凭据';
+      $('credentialDialogState').textContent = '';
+      $('credentialDialog').showModal();
+      $('credentialLabel').focus();
+    }
+    $('openCredential').addEventListener('click', () => openCredentialDialog());
+    $('cancelCredential').addEventListener('click', () => $('credentialDialog').close());
+    $('credentialDialog').addEventListener('cancel', (event) => { if (state.credentialBusy) event.preventDefault(); });
+    $('credentialDialog').addEventListener('close', () => {
+      $('credentialForm').reset();
+      $('credentialKey').value = '';
+      state.editingCredentialId = '';
+      $('credentialDialogState').textContent = '';
+    });
     $('credentialForm').addEventListener('submit', async (event) => {
       event.preventDefault();
+      if (state.credentialBusy) return;
       const label = $('credentialLabel').value.trim();
       const apiKey = $('credentialKey').value.trim();
+      const id = state.editingCredentialId;
       $('credentialKey').value = '';
-      if (!label || !apiKey) { $('credentialState').textContent = '请输入名称和 API Key'; return; }
-      $('addCredential').disabled = true;
-      $('credentialState').textContent = '正在导入…';
-      try { await api('/credentials', { method: 'POST', body: { label, api_key: apiKey } }); $('credentialLabel').value = ''; renderCredentials(await api('/credentials')); await loadStatus(); $('credentialState').textContent = '凭据已导入'; }
-      catch (error) { $('credentialState').textContent = `导入失败：${error.message}`; }
-      finally { $('addCredential').disabled = false; }
+      if (!label || (!id && !apiKey)) { $('credentialDialogState').textContent = '请输入名称和 API Key'; return; }
+      state.credentialBusy = true;
+      $('saveCredential').disabled = true;
+      $('cancelCredential').disabled = true;
+      $('credentialDialogState').textContent = '正在保存…';
+      try {
+        const body = { label };
+        if (apiKey) body.api_key = apiKey;
+        await api('/credentials', { method: id ? 'PUT' : 'POST', query: id ? { id } : undefined, body });
+        $('credentialDialog').close();
+        $('credentialState').textContent = id ? '凭据已更新' : '凭据已添加';
+        renderCredentials(await api('/credentials'));
+        await loadStatus();
+      } catch (error) {
+        const message = `保存失败：${error.message}`;
+        if ($('credentialDialog').open) $('credentialDialogState').textContent = message;
+        else $('credentialState').textContent = `已提交，刷新失败：${error.message}`;
+      } finally { state.credentialBusy = false; $('saveCredential').disabled = false; $('cancelCredential').disabled = false; }
     });
     $('credentialList').addEventListener('click', async (event) => {
+      const edit = event.target.closest('.edit-credential');
+      if (edit) { openCredentialDialog(edit.dataset.id, edit.dataset.label); return; }
       const button = event.target.closest('.remove-credential');
       if (!button) return;
       const id = button.dataset.id;
@@ -575,7 +691,7 @@
       catch (error) { toast(`删除失败：${error.message}`); button.disabled = false; }
     });
     if (!apiReady()) globalError('管理 API 路径尚未注入；请由宿主设置 __PASSBRIDGE_API_BASE__。');
-    else { loadStatus().catch((error) => globalError(error.message)); loadLogs(); }
+    else { loadStatus().then(() => loadLogs()).catch((error) => globalError(error.message)); }
   </script>
 </body>
 </html>

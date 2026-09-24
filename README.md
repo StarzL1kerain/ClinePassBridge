@@ -9,6 +9,8 @@ ClinePassBridge 是 [CLIProxyAPI (CPA)](https://github.com/router-for-me/CLIProx
 - 非流式支持 `native`（解包 Cline 原生 `success/data`）、`native-fallback`（原生遇到空内容错误时尝试流式聚合）和 `stream-aggregate`（直接由 SSE 聚合）三种模式。默认 `native-fallback`。
 - 流式请求转发为真正的 SSE，处理跨网络分块的事件、用量与终止信号；从上游响应元数据记录实际 provider，缺失时显示“未知”，不根据请求参数猜测。
 - 管理页展示凭据、模型映射、请求状态、耗时、用量、实际 provider 和尝试记录。
+- 刷新模型先打开选择窗口，确认后才添加所选模型；客户端名称不带前缀，上游映射保留 `cline-pass/`。
+- 凭据使用添加与编辑弹窗，支持修改备注和 API key；编辑时留空 key 保持原值，页面不回显旧 key。
 
 ## 安装
 
@@ -30,7 +32,7 @@ CPA 的内置官方市场始终保留；`store-sources` 添加一个额外来源
 /v0/resource/plugins/clinepassbridge/console
 ```
 
-页面会要求输入 **CPA 管理密钥**。密钥只保存在当前页面内存中，刷新或关闭页面后需重新输入。CPA 的管理 API 必须已启用；管理 API 的访问限制仍由 CPA 控制。进入页面后在“凭据”导入自己的 Cline Pass API key，再检查或添加模型映射。不要把 key 写入公开仓库、市场 registry 或插件配置示例。
+页面优先复用同源 CPA 管理中心通过“记住密码”保存的登录信息，并核对其服务器地址。未保存登录信息、存储不可用或管理中心跨域时，才提示输入 **CPA 管理密钥**；手动输入的密钥仅保存在当前页面内存。插件不会额外持久化管理密钥。CPA 的管理 API 必须已启用；接口鉴权仍由 CPA 控制。进入页面后点“添加凭据”，导入自己的 Cline Pass API key，再检查或选择模型映射。
 
 插件配置与请求记录默认写在 `plugins/clinepassbridge-data`；凭据文件写在 CPA 配置的 `auth-dir`。使用容器时，应分别持久化这两个目录及插件目录。备份时也应覆盖这两处数据。
 
@@ -46,7 +48,7 @@ CPA 的内置官方市场始终保留；`store-sources` 添加一个额外来源
 }
 ```
 
-当前**只使用 Cline 自动路由**。2026-09-24 的同模型对照中，指定不存在的 provider 仍返回成功并路由到真实 provider，说明该路径的钉上游参数被忽略。因此本版关闭固定上游、排除和排序功能；管理页的实际 provider 只取上游回报，未知就标为未知。未来恢复这类功能需要用“无效 provider 被明确拒绝，指定 provider 与实际回报一致”的对照重新验证，不能只看 HTTP 200 或请求体。
+日志中的实际 provider 来自上游响应；未回报时显示“未知”。
 
 非流式三种模式用于应对 Cline 返回格式和偶发空内容，`native-fallback` 可能产生第二次上游请求。SSE 一旦开始向客户端输出，就不进行透明重试。上游错误、订阅额度与模型可用性仍由 Cline 决定。
 
