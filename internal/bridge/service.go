@@ -53,7 +53,7 @@ func (s *Service) config() Config {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	c := s.cfg
-	c.Models = append([]Model(nil), c.Models...)
+	c.Models = append([]Model{}, c.Models...)
 	return c
 }
 func id() string { b := make([]byte, 12); _, _ = rand.Read(b); return hex.EncodeToString(b) }

@@ -110,7 +110,10 @@ func (h *fakeHost) call(method string, payload, out any) error {
 func registeredService(t *testing.T, mode string) *Service {
 	t.Helper()
 	s := NewService()
-	configYAML := fmt.Sprintf("data_dir: %q\nnonstream_mode: %s\n", filepath.ToSlash(t.TempDir()), mode)
+	configYAML := fmt.Sprintf("data_dir: %q\n", filepath.ToSlash(t.TempDir()))
+	if mode != "" {
+		configYAML += fmt.Sprintf("nonstream_mode: %s\n", mode)
+	}
 	_, err := s.Handle("plugin.register", jsonBytes(map[string]any{"config_yaml": []byte(configYAML)}))
 	if err != nil {
 		t.Fatalf("register plugin: %v", err)
@@ -345,6 +348,44 @@ func TestActualProviderRequiresResponseEvidence(t *testing.T) {
 				t.Fatalf("actual provider = %q / %q, want %q", entry.Provider, attempt.Provider, test.want)
 			}
 		})
+	}
+}
+
+func TestDefaultNonstreamUsesOneStreamingAttempt(t *testing.T) {
+	s := registeredService(t, "") // No explicit setting: exercise the installation default.
+	h := newFakeHost(ssePlan(simpleSSE()))
+	s.SetHost(h.call)
+	result, err := s.Handle("executor.execute", executorRequest(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := result.(Response)
+	var payload map[string]any
+	if response.Headers.Get("Content-Type") != "application/json" || json.Unmarshal(response.Payload, &payload) != nil {
+		t.Fatalf("nonstream response is not JSON: %s", response.Payload)
+	}
+	if len(h.opened) != 1 || !h.opened[0] {
+		t.Fatalf("default made native/repeated attempt: %#v", h.opened)
+	}
+	if !bytes.Contains(response.Payload, []byte("hello")) || number(object(payload["usage"])["prompt_tokens"]) != 8 {
+		t.Fatalf("aggregation lost text or usage: %s", response.Payload)
+	}
+	if len(s.logs) != 1 || len(s.logs[0].Attempts) != 1 || s.logs[0].Attempts[0].Mode != "stream-aggregate" || s.logs[0].Status != 200 {
+		t.Fatalf("unexpected attempts: %#v", s.logs)
+	}
+}
+
+func TestEmptyModelSelectionClearsRegistration(t *testing.T) {
+	s := registeredService(t, "")
+	h := newFakeHost()
+	s.SetHost(h.call)
+	result, err := s.Handle("management.handle", jsonBytes(ManagementRequest{Method: "PUT", Path: apiBase + "/models", Body: jsonBytes(map[string]any{"models": []Model{}})}))
+	if err != nil || result.(ManagementResponse).StatusCode != 200 {
+		t.Fatalf("empty selection failed: %#v, %v", result, err)
+	}
+	models := s.modelRegistration().(map[string]any)["Models"].([]map[string]any)
+	if len(models) != 0 {
+		t.Fatalf("empty selection retained models: %#v", models)
 	}
 }
 

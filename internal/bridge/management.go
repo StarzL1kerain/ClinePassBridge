@@ -82,13 +82,16 @@ func (s *Service) management(raw json.RawMessage) (any, error) {
 		return managementJSON(200, map[string]any{"models": s.config().Models})
 	case "PUT /models":
 		var in struct {
-			Models []Model `json:"models"`
+			Models *[]Model `json:"models"`
 		}
 		if e := json.Unmarshal(r.Body, &in); e != nil {
 			return managementJSON(400, map[string]any{"error": "invalid model JSON"})
 		}
 		cfg := s.config()
-		cfg.Models = in.Models
+		if in.Models == nil {
+			return managementJSON(400, map[string]any{"error": "models must be an array"})
+		}
+		cfg.Models = *in.Models
 		if e := s.saveConfig(cfg); e != nil {
 			return managementJSON(statusOf(e), map[string]any{"error": safeError(e)})
 		}
