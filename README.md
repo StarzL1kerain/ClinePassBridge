@@ -5,7 +5,7 @@ ClinePassBridge 是 [CLIProxyAPI (CPA)](https://github.com/router-for-me/CLIProx
 ## 功能
 
 - 在插件管理页导入 Cline Pass API key，凭据交给 CPA 的 `auth-dir` 保存；插件状态目录不保存 key。
-- 将客户端模型名映射为 `cline-pass/*` 上游名。未带前缀的名称只补一次前缀；默认别名 `deepseek-flash` 指向 `cline-pass/deepseek-v4.1-flash`，可在管理页维护其他映射。
+- 将客户端模型名映射为指定上游 ID，用户填写的两个名称均原样保存；默认别名 `deepseek-flash` 指向 `cline-pass/deepseek-v4.1-flash`，可在管理页维护其他映射。
 - 非流式支持 `native`（解包 Cline 原生 `success/data`）、`native-fallback`（原生遇到空内容错误时尝试流式聚合）和 `stream-aggregate`（直接由 SSE 聚合）三种模式。默认 `stream-aggregate`，直接聚合上游 SSE 后返回 JSON，跳过原生非流式尝试。
 - 流式请求转发为真正的 SSE，处理跨网络分块的事件、用量与终止信号；从上游响应元数据记录实际 provider，缺失时显示“未知”，不根据请求参数猜测。
 - 管理页展示凭据、模型映射、请求状态、耗时、用量、实际 provider 和尝试记录。
