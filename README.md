@@ -2,6 +2,14 @@
 
 ClinePassBridge 是 [CLIProxyAPI (CPA)](https://github.com/router-for-me/CLIProxyAPI) 的 Cline Pass 插件。它把 Cline Pass API key 接入 CPA 的凭据系统，提供模型别名、Chat Completions 协议适配、真实 SSE 流及请求观测。首版面向 CLIProxyAPI v7.3.12，发布 Linux amd64/arm64、macOS amd64/arm64 和 Windows amd64 五个平台的动态库。
 
+> **本仓库说明**：本仓库是 [xiao-qiu-qiu/ClinePassBridge](https://github.com/xiao-qiu-qiu/ClinePassBridge) 的独立维护分支（fork），不向上游提交合并请求，两边各自演进。相对上游新增/改进：
+>
+> - Cline Pass **账号登录**（WorkOS 设备码流程）与令牌自动续期；
+> - **额度上报**（依赖宿主的插件额度能力；管理面板需打补丁，见下方「额度」一节）；
+> - 插件错误提示中文化。
+>
+> 仓库公开、按 MIT 协议授权，谁想用谁用。
+
 ## 功能
 
 - 支持两种凭据：**Cline Pass 账号登录**和 **API key**。账号登录走 WorkOS 设备码流程（与 Cline CLI 的 `cline auth` 同一条链路），在 CPA 的凭据管理里发起登录后打开页面给出的链接完成授权即可，插件自行换取并续期令牌；API key 仍可在插件管理页导入。
