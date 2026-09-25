@@ -22,7 +22,7 @@ type SSEDecoder struct {
 func (d *SSEDecoder) Feed(b []byte, emit func([]byte, string) error) error {
 	d.buffer = append(d.buffer, b...)
 	if len(d.buffer) > d.max {
-		return fail(502, "SSE frame exceeds configured limit")
+		return fail(502, "SSE 数据帧超过配置上限")
 	}
 	for {
 		i := bytes.IndexByte(d.buffer, '\n')
@@ -49,7 +49,7 @@ func (d *SSEDecoder) Feed(b []byte, emit func([]byte, string) error) error {
 			d.data = append(d.data, v)
 			d.size += len(v)
 			if d.size > d.max {
-				return fail(502, "SSE frame exceeds configured limit")
+				return fail(502, "SSE 数据帧超过配置上限")
 			}
 		}
 		if strings.HasPrefix(line, "event:") {
@@ -60,7 +60,7 @@ func (d *SSEDecoder) Feed(b []byte, emit func([]byte, string) error) error {
 }
 func (d *SSEDecoder) End() error {
 	if strings.TrimSpace(string(d.buffer)) != "" || len(d.data) > 0 {
-		return fail(502, "upstream stream ended with an incomplete SSE frame")
+		return fail(502, "上游流结束时 SSE 数据帧不完整")
 	}
 	return nil
 }
@@ -194,10 +194,10 @@ func (c *completion) allFinished() bool {
 }
 func (c *completion) result(model string) ([]byte, error) {
 	if !c.done || !c.allFinished() {
-		return nil, fail(502, "upstream stream ended before a completion and [DONE]")
+		return nil, fail(502, "上游流在收到完整内容与 [DONE] 之前就结束了")
 	}
 	if !c.hasOutput {
-		return nil, fail(500, "empty response content")
+		return nil, fail(500, emptyContentMessage)
 	}
 	out := c.root
 	out["object"] = "chat.completion"
@@ -262,12 +262,12 @@ func unwrap(body []byte) (map[string]any, error) {
 	if j["success"] == true {
 		d := object(j["data"])
 		if d == nil {
-			return nil, fail(502, "Cline success response has no data object")
+			return nil, fail(502, "Cline 成功响应缺少 data 对象")
 		}
 		j = d
 	}
 	if len(list(j["choices"])) == 0 {
-		return nil, fail(502, "Cline response has no choices")
+		return nil, fail(502, "Cline 响应缺少 choices")
 	}
 	return j, nil
 }
@@ -322,7 +322,16 @@ func contentStarted(j map[string]any) bool {
 	return false
 }
 func isEmptyError(err error) bool {
-	return err != nil && strings.Contains(strings.ToLower(err.Error()), "empty response content")
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	for _, signal := range emptyContentSignals() {
+		if strings.Contains(message, strings.ToLower(signal)) {
+			return true
+		}
+	}
+	return false
 }
 
 var errStreamDone = errors.New("stream complete")

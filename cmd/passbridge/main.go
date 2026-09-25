@@ -160,28 +160,28 @@ func cliproxyPluginCall(method *C.char, request *C.uint8_t, requestLen C.size_t,
 	response.len = 0
 	defer func() {
 		if recover() != nil {
-			writeResponse(response, failure(&rpcError{ErrorCode: "plugin_panic", Message: "plugin callback panicked", HTTPStatus: http.StatusInternalServerError}))
+			writeResponse(response, failure(&rpcError{ErrorCode: "plugin_panic", Message: "插件回调发生 panic", HTTPStatus: http.StatusInternalServerError}))
 			rc = 1
 		}
 	}()
 	if method == nil || strings.TrimSpace(C.GoString(method)) == "" {
-		writeResponse(response, failure(&rpcError{ErrorCode: "invalid_method", Message: "method is required", HTTPStatus: http.StatusBadRequest}))
+		writeResponse(response, failure(&rpcError{ErrorCode: "invalid_method", Message: "缺少 method 参数", HTTPStatus: http.StatusBadRequest}))
 		return 1
 	}
 	if requestLen > C.size_t(math.MaxInt32) || (requestLen > 0 && request == nil) {
-		writeResponse(response, failure(&rpcError{ErrorCode: "invalid_request", Message: "request buffer is invalid", HTTPStatus: http.StatusBadRequest}))
+		writeResponse(response, failure(&rpcError{ErrorCode: "invalid_request", Message: "请求缓冲区无效", HTTPStatus: http.StatusBadRequest}))
 		return 1
 	}
 	var raw json.RawMessage
 	if requestLen > 0 {
 		raw = C.GoBytes(unsafe.Pointer(request), C.int(requestLen))
 		if !json.Valid(raw) {
-			writeResponse(response, failure(&rpcError{ErrorCode: "invalid_request", Message: "request JSON is invalid", HTTPStatus: http.StatusBadRequest}))
+			writeResponse(response, failure(&rpcError{ErrorCode: "invalid_request", Message: "请求 JSON 无效", HTTPStatus: http.StatusBadRequest}))
 			return 1
 		}
 	}
 	if service == nil {
-		writeResponse(response, failure(&rpcError{ErrorCode: "plugin_stopped", Message: "plugin is not initialized", HTTPStatus: http.StatusServiceUnavailable}))
+		writeResponse(response, failure(&rpcError{ErrorCode: "plugin_stopped", Message: "插件尚未初始化", HTTPStatus: http.StatusServiceUnavailable}))
 		return 1
 	}
 	result, err := service.Handle(C.GoString(method), raw)
@@ -191,7 +191,7 @@ func cliproxyPluginCall(method *C.char, request *C.uint8_t, requestLen C.size_t,
 	}
 	encoded, err := success(result)
 	if err != nil {
-		writeResponse(response, failure(&rpcError{ErrorCode: "serialization_error", Message: "plugin response cannot be encoded", HTTPStatus: http.StatusInternalServerError}))
+		writeResponse(response, failure(&rpcError{ErrorCode: "serialization_error", Message: "插件响应无法编码", HTTPStatus: http.StatusInternalServerError}))
 		return 1
 	}
 	writeResponse(response, encoded)
@@ -235,7 +235,7 @@ func success(result any) ([]byte, error) {
 func failure(details *rpcError) []byte {
 	raw, err := json.Marshal(rpcEnvelope{OK: false, Error: details})
 	if err != nil {
-		return []byte(`{"ok":false,"error":{"code":"serialization_error","message":"plugin error cannot be encoded","http_status":500}}`)
+		return []byte(`{"ok":false,"error":{"code":"serialization_error","message":"插件错误无法编码","http_status":500}}`)
 	}
 	return raw
 }
@@ -268,18 +268,18 @@ func writeResponse(response *C.cliproxy_buffer, raw []byte) {
 func callHost(method string, payload any, out any) (err error) {
 	defer func() {
 		if recover() != nil {
-			err = fmt.Errorf("host callback %s panicked", method)
+			err = fmt.Errorf("宿主回调 %s 发生 panic", method)
 		}
 	}()
 	if strings.TrimSpace(method) == "" {
-		return fmt.Errorf("host callback method is required")
+		return fmt.Errorf("缺少宿主回调方法名")
 	}
 	rawPayload, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("encode host callback %s: %w", method, err)
+		return fmt.Errorf("编码宿主回调 %s 失败：%w", method, err)
 	}
 	if len(rawPayload) > math.MaxInt32 {
-		return fmt.Errorf("host callback %s request is too large", method)
+		return fmt.Errorf("宿主回调 %s 的请求体过大", method)
 	}
 	cMethod := C.CString(method)
 	defer C.free(unsafe.Pointer(cMethod))
@@ -287,24 +287,24 @@ func callHost(method string, payload any, out any) (err error) {
 	defer C.free(cPayload)
 	rawResponse, callCode, err := invokeHost(cMethod, (*C.uint8_t)(cPayload), C.size_t(len(rawPayload)))
 	if err != nil {
-		return fmt.Errorf("host callback %s: %w", method, err)
+		return fmt.Errorf("宿主回调 %s：%w", method, err)
 	}
 	var envelope rpcEnvelope
 	if err := json.Unmarshal(rawResponse, &envelope); err != nil {
-		return fmt.Errorf("decode host callback %s: %w", method, err)
+		return fmt.Errorf("解析宿主回调 %s 响应失败：%w", method, err)
 	}
 	if !envelope.OK {
 		if envelope.Error != nil {
 			return envelope.Error
 		}
-		return fmt.Errorf("host callback %s failed", method)
+		return fmt.Errorf("宿主回调 %s 执行失败", method)
 	}
 	if callCode != 0 {
-		return fmt.Errorf("host callback %s returned code=%d", method, int(callCode))
+		return fmt.Errorf("宿主回调 %s 返回码=%d", method, int(callCode))
 	}
 	if out != nil && len(envelope.Result) > 0 {
 		if err := json.Unmarshal(envelope.Result, out); err != nil {
-			return fmt.Errorf("decode host callback %s result: %w", method, err)
+			return fmt.Errorf("解析宿主回调 %s 结果失败：%w", method, err)
 		}
 	}
 	return nil
@@ -319,7 +319,7 @@ func invokeHost(method *C.char, request *C.uint8_t, requestLen C.size_t) ([]byte
 		if response.ptr != nil {
 			C.free_host_buffer(response.ptr, response.len)
 		}
-		return nil, callCode, fmt.Errorf("invalid response buffer, code=%d", int(callCode))
+		return nil, callCode, fmt.Errorf("宿主回调返回了无效缓冲区，返回码=%d", int(callCode))
 	}
 	rawResponse := C.GoBytes(response.ptr, C.int(response.len))
 	C.free_host_buffer(response.ptr, response.len)
