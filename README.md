@@ -65,6 +65,10 @@ ClinePassBridge 是 [CLIProxyAPI (CPA)](https://github.com/router-for-me/CLIProx
 补丁版面板会把 `window` token 翻译成标签，识别 `five_hour` / `weekly` / `seven_day` / `monthly`，
 其余 token 原样显示；未识别时不会丢数据，只是标签不好看。
 
+打上补丁后的实际效果（套餐、余额、三个窗口的上限，以及 5 小时 / 7 天 / 30 天窗口的剩余比例）：
+
+![凭据卡片上的额度区块：套餐 Cline Pass (Monthly)、余额 -US$0.03、5 小时/7 天/30 天额度上限 US$10/25/50、周期剩余 23.3 天，下方为 5 小时剩余 100%、7 天剩余 0%、30 天剩余 50% 三个进度条，右下角是「刷新额度」按钮](预期效果.png)
+
 ## 安装
 
 需要 CLIProxyAPI v7.3.12 或兼容的插件 ABI，且宿主的 `plugins.enabled` 为 `true`。
