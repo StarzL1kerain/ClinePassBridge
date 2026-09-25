@@ -18,7 +18,7 @@ const apiBase = "/v0/management/clinepassbridge"
 
 func (s *Service) registerManagement(raw json.RawMessage) (any, error) {
 	routes := []map[string]string{}
-	for _, p := range []string{"status", "logs", "models", "config", "credentials"} {
+	for _, p := range []string{"status", "logs", "models", "config", "credentials", "quota"} {
 		routes = append(routes, map[string]string{"Method": "GET", "Path": apiBase + "/" + p})
 	}
 	for _, p := range []string{"models/refresh", "credentials"} {
@@ -52,7 +52,7 @@ func (s *Service) management(raw json.RawMessage) (any, error) {
 		return ManagementResponse{StatusCode: 200, Headers: http.Header{"Content-Type": []string{"text/html; charset=utf-8"}, "Cache-Control": []string{"no-store"}, "X-Content-Type-Options": []string{"nosniff"}}, Body: b}, nil
 	}
 	if !strings.HasPrefix(r.Path, apiBase+"/") {
-		return managementJSON(404, map[string]any{"error": "not found"})
+		return managementJSON(404, map[string]any{"error": "未找到"})
 	}
 	p := strings.TrimPrefix(r.Path, apiBase)
 	switch r.Method + " " + p {
@@ -70,7 +70,7 @@ func (s *Service) management(raw json.RawMessage) (any, error) {
 		dataDir := cfg.DataDir
 		base := cfg.BaseURL
 		if e := json.Unmarshal(r.Body, &cfg); e != nil {
-			return managementJSON(400, map[string]any{"error": "invalid config JSON"})
+			return managementJSON(400, map[string]any{"error": "config JSON 无效"})
 		}
 		cfg.DataDir = dataDir
 		cfg.BaseURL = base
@@ -85,17 +85,17 @@ func (s *Service) management(raw json.RawMessage) (any, error) {
 			Models *[]Model `json:"models"`
 		}
 		if e := json.Unmarshal(r.Body, &in); e != nil {
-			return managementJSON(400, map[string]any{"error": "invalid model JSON"})
+			return managementJSON(400, map[string]any{"error": "模型 JSON 无效"})
 		}
 		cfg := s.config()
 		if in.Models == nil {
-			return managementJSON(400, map[string]any{"error": "models must be an array"})
+			return managementJSON(400, map[string]any{"error": "models 必须是数组"})
 		}
 		cfg.Models = *in.Models
 		if e := s.saveConfig(cfg); e != nil {
 			return managementJSON(statusOf(e), map[string]any{"error": safeError(e)})
 		}
-		return managementJSON(200, map[string]any{"models": cfg.Models, "message": "Saved. CPA credential registrations have been refreshed."})
+		return managementJSON(200, map[string]any{"models": cfg.Models, "message": "已保存，CPA 的凭据注册已刷新。"})
 	case "POST /models/refresh":
 		models, e := s.refreshModels(r.HostCallbackID)
 		if e != nil {
@@ -104,6 +104,8 @@ func (s *Service) management(raw json.RawMessage) (any, error) {
 		return managementJSON(200, map[string]any{"models": models})
 	case "GET /credentials":
 		return managementJSON(200, map[string]any{"items": s.credentials()})
+	case "GET /quota":
+		return managementJSON(200, s.managementQuota(r.Query.Get("id")))
 	case "POST /credentials":
 		return s.importCredential(r)
 	case "PUT /credentials":
@@ -111,7 +113,7 @@ func (s *Service) management(raw json.RawMessage) (any, error) {
 	case "DELETE /credentials":
 		return s.deleteCredential(r.Query.Get("id"))
 	default:
-		return managementJSON(404, map[string]any{"error": "not found"})
+		return managementJSON(404, map[string]any{"error": "未找到"})
 	}
 }
 func (s *Service) saveConfig(cfg Config) error {
@@ -188,14 +190,14 @@ func (s *Service) importCredential(r ManagementRequest) (any, error) {
 		APIKey string `json:"api_key"`
 	}
 	if e := json.Unmarshal(r.Body, &in); e != nil {
-		return managementJSON(400, map[string]any{"error": "invalid credential JSON"})
+		return managementJSON(400, map[string]any{"error": "凭据 JSON 无效"})
 	}
 	in.APIKey = strings.TrimSpace(in.APIKey)
 	if len(in.APIKey) < 8 || strings.ContainsAny(in.APIKey, "\r\n") {
-		return managementJSON(400, map[string]any{"error": "invalid API key"})
+		return managementJSON(400, map[string]any{"error": "API key 无效"})
 	}
 	if len(in.Label) > 100 {
-		return managementJSON(400, map[string]any{"error": "label exceeds 100 characters"})
+		return managementJSON(400, map[string]any{"error": "备注长度不能超过 100 个字符"})
 	}
 	c := Credential{Type: Provider, ID: PluginID + "-" + id(), Label: strings.TrimSpace(in.Label), APIKey: in.APIKey, RequestScopedErrors: requestErrorRules()}
 	if c.Label == "" {
@@ -205,7 +207,7 @@ func (s *Service) importCredential(r ManagementRequest) (any, error) {
 		Path string `json:"path"`
 	}
 	if e := s.call("host.auth.save", map[string]any{"name": c.ID + ".json", "json": json.RawMessage(jsonBytes(c))}, &saved); e != nil {
-		return managementJSON(500, map[string]any{"error": "credential persistence failed"})
+		return managementJSON(500, map[string]any{"error": "凭据保存失败"})
 	}
 	s.mu.Lock()
 	s.creds[c.ID] = c
@@ -224,7 +226,7 @@ func (s *Service) updateCredential(r ManagementRequest) (any, error) {
 		APIKey *string `json:"api_key"`
 	}
 	if e := json.Unmarshal(r.Body, &in); e != nil {
-		return managementJSON(400, map[string]any{"error": "invalid credential JSON"})
+		return managementJSON(400, map[string]any{"error": "凭据 JSON 无效"})
 	}
 	id := r.Query.Get("id")
 	s.mu.RLock()
@@ -232,12 +234,12 @@ func (s *Service) updateCredential(r ManagementRequest) (any, error) {
 	filename := s.authFiles[id]
 	s.mu.RUnlock()
 	if !ok {
-		return managementJSON(404, map[string]any{"error": "credential not found"})
+		return managementJSON(404, map[string]any{"error": "未找到凭据"})
 	}
 	if in.Label != nil {
 		c.Label = strings.TrimSpace(*in.Label)
 		if len(c.Label) > 100 {
-			return managementJSON(400, map[string]any{"error": "label exceeds 100 characters"})
+			return managementJSON(400, map[string]any{"error": "备注长度不能超过 100 个字符"})
 		}
 		if c.Label == "" {
 			c.Label = "Cline Pass"
@@ -246,7 +248,7 @@ func (s *Service) updateCredential(r ManagementRequest) (any, error) {
 	if in.APIKey != nil && strings.TrimSpace(*in.APIKey) != "" {
 		key := strings.TrimSpace(*in.APIKey)
 		if len(key) < 8 || strings.ContainsAny(key, "\r\n") {
-			return managementJSON(400, map[string]any{"error": "invalid API key"})
+			return managementJSON(400, map[string]any{"error": "API key 无效"})
 		}
 		c.APIKey = key
 	}
@@ -254,11 +256,11 @@ func (s *Service) updateCredential(r ManagementRequest) (any, error) {
 		filename = c.ID + ".json"
 	}
 	if filepath.Base(filename) != filename || strings.ContainsAny(filename, "/\\") {
-		return managementJSON(400, map[string]any{"error": "invalid credential filename"})
+		return managementJSON(400, map[string]any{"error": "凭据文件名无效"})
 	}
 	c.RequestScopedErrors = requestErrorRules()
 	if e := s.call("host.auth.save", map[string]any{"name": filename, "json": json.RawMessage(jsonBytes(c))}, nil); e != nil {
-		return managementJSON(500, map[string]any{"error": "credential persistence failed"})
+		return managementJSON(500, map[string]any{"error": "凭据保存失败"})
 	}
 	s.mu.Lock()
 	s.creds[id] = c
@@ -272,32 +274,32 @@ func (s *Service) deleteCredential(credentialID string) (any, error) {
 	defer s.mu.Unlock()
 	c, ok := s.creds[credentialID]
 	if !ok {
-		return managementJSON(404, map[string]any{"error": "credential not found"})
+		return managementJSON(404, map[string]any{"error": "未找到凭据"})
 	}
 	if s.authDir == "" {
-		return managementJSON(409, map[string]any{"error": "credential storage directory not resolved"})
+		return managementJSON(409, map[string]any{"error": "尚未解析到凭据存储目录"})
 	}
 	if filepath.Base(c.ID) != c.ID || strings.ContainsAny(c.ID, "/\\") {
-		return managementJSON(400, map[string]any{"error": "invalid credential ID"})
+		return managementJSON(400, map[string]any{"error": "凭据 ID 无效"})
 	}
 	filename := s.authFiles[c.ID]
 	if filename == "" {
 		filename = c.ID + ".json"
 	}
 	if filepath.Base(filename) != filename || strings.ContainsAny(filename, "/\\") {
-		return managementJSON(400, map[string]any{"error": "invalid credential filename"})
+		return managementJSON(400, map[string]any{"error": "凭据文件名无效"})
 	}
 	path := filepath.Join(s.authDir, filename)
 	b, e := os.ReadFile(path)
 	if e != nil {
-		return managementJSON(409, map[string]any{"error": "credential file missing"})
+		return managementJSON(409, map[string]any{"error": "凭据文件不存在"})
 	}
 	var disk Credential
 	if json.Unmarshal(b, &disk) != nil || disk.Type != Provider || disk.ID != c.ID {
-		return managementJSON(409, map[string]any{"error": "credential file ownership mismatch"})
+		return managementJSON(409, map[string]any{"error": "凭据文件归属校验失败"})
 	}
 	if e = os.Remove(path); e != nil {
-		return managementJSON(500, map[string]any{"error": "credential removal failed"})
+		return managementJSON(500, map[string]any{"error": "凭据删除失败"})
 	}
 	delete(s.creds, credentialID)
 	delete(s.authFiles, credentialID)
@@ -324,7 +326,7 @@ func (s *Service) refreshModels(callbackID string) ([]Model, error) {
 	}
 	candidates := list(j["clinePass"])
 	if len(candidates) == 0 {
-		return nil, fail(502, "Cline catalog returned no clinePass offers")
+		return nil, fail(502, "Cline 目录未返回 clinePass 条目")
 	}
 	models := []Model{}
 	seen := map[string]bool{}

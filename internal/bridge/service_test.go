@@ -311,7 +311,7 @@ func TestStreamErrorsAreReported(t *testing.T) {
 		plan   hostPlan
 		needle string
 	}{
-		{"missing DONE", ssePlan(sseFrame(map[string]any{"choices": []any{map[string]any{"index": 0, "delta": map[string]any{"content": "partial"}, "finish_reason": "stop"}}})), "before [DONE]"},
+		{"missing DONE", ssePlan(sseFrame(map[string]any{"choices": []any{map[string]any{"index": 0, "delta": map[string]any{"content": "partial"}, "finish_reason": "stop"}}})), "收到 [DONE] 之前"},
 		{"event error", ssePlan([]byte("event: error\r\ndata: {\"error\":{\"message\":\"quota exhausted\"}}\r\n\r\n")), "quota exhausted"},
 		{"transport interruption", hostPlan{status: 200, header: http.Header{"Content-Type": []string{"text/event-stream"}}, chunks: []readChunk{{Payload: sseFrame(map[string]any{"choices": []any{map[string]any{"index": 0, "delta": map[string]any{"content": "partial"}}}})}, {Error: "connection reset", Done: true}}}, "connection reset"},
 	} {
@@ -466,7 +466,7 @@ func TestStreamingEmitsMultipleChunksAndHandlesClientCancel(t *testing.T) {
 						t.Fatalf("executor payload must be raw JSON for CPA framing: %q", payload)
 					}
 				}
-			} else if len(emitted) != 1 || !strings.Contains(closeError, "client disconnected") {
+			} else if len(emitted) != 1 || !strings.Contains(closeError, "客户端已断开") {
 				t.Fatalf("cancel output = %#v, close error = %q", emitted, closeError)
 			}
 		})

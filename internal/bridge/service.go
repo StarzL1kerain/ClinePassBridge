@@ -34,10 +34,12 @@ type Service struct {
 	revoked       map[string]bool
 	stopCh        chan struct{}
 	logWriteError string
+	oauthMu       sync.Mutex
+	oauth         map[string]oauthSession
 }
 
 func NewService() *Service {
-	return &Service{cfg: defaultConfig(), creds: map[string]Credential{}, authFiles: map[string]string{}, streams: map[string]struct{}{}, revoked: map[string]bool{}, stopCh: make(chan struct{})}
+	return &Service{cfg: defaultConfig(), creds: map[string]Credential{}, authFiles: map[string]string{}, streams: map[string]struct{}{}, revoked: map[string]bool{}, oauth: map[string]oauthSession{}, stopCh: make(chan struct{})}
 }
 func (s *Service) SetHost(h func(string, any, any) error) { s.mu.Lock(); s.host = h; s.mu.Unlock() }
 func (s *Service) call(method string, in, out any) error {
@@ -45,7 +47,7 @@ func (s *Service) call(method string, in, out any) error {
 	h := s.host
 	s.mu.RUnlock()
 	if h == nil {
-		return errors.New("host callback is not initialized")
+		return errors.New("宿主回调未初始化")
 	}
 	return h(method, in, out)
 }
@@ -125,11 +127,19 @@ func (s *Service) Handle(method string, raw json.RawMessage) (any, error) {
 	case "auth.parse":
 		return s.parseAuth(raw)
 	case "auth.login.start":
-		return nil, fail(400, "Import a Cline API key from ClinePassBridge credentials; interactive OAuth is not used")
+		return s.startOAuthLogin(raw)
 	case "auth.login.poll":
-		return map[string]any{"Status": "error", "Message": "Use API key import"}, nil
+		return s.pollOAuthLogin(raw)
 	case "auth.refresh":
 		return s.refreshAuth(raw)
+	case "quota.identifier":
+		return quotaIdentity(), nil
+	case "quota.describe":
+		return quotaDescribe(), nil
+	case "quota.fetch":
+		return s.fetchQuota(raw)
+	case "quota.reset":
+		return quotaUnsupportedReset(), nil
 	case "executor.execute", "executor.execute_stream":
 		var r ExecutorRequest
 		if e := json.Unmarshal(raw, &r); e != nil {
@@ -140,9 +150,9 @@ func (s *Service) Handle(method string, raw json.RawMessage) (any, error) {
 		}
 		return s.execute(r)
 	case "executor.count_tokens":
-		return nil, fail(501, "Cline Pass does not expose an exact token counting endpoint")
+		return nil, fail(501, "Cline Pass 未提供精确的 token 计数接口")
 	case "executor.http_request":
-		return nil, fail(400, "Use the ClinePassBridge model executor")
+		return nil, fail(400, "请改用 ClinePassBridge 的模型执行器")
 	case "management.register":
 		return s.registerManagement(raw)
 	case "management.handle":
@@ -161,17 +171,18 @@ func (s *Service) Handle(method string, raw json.RawMessage) (any, error) {
 		for _, stream := range streams {
 			s.closeUpstream(stream)
 		}
+		s.clearOAuthSessions()
 		s.active.Wait()
 		return map[string]any{}, nil
 	default:
-		return nil, fail(400, "unsupported plugin method: "+method)
+		return nil, fail(400, "不支持的插件方法："+method)
 	}
 }
 func (s *Service) begin() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.stopped {
-		return fail(503, "ClinePassBridge is shutting down")
+		return fail(503, "ClinePassBridge 正在关闭")
 	}
 	s.active.Add(1)
 	return nil
@@ -206,7 +217,7 @@ func (s *Service) refreshRegistrations() error {
 }
 
 func registration() any {
-	return map[string]any{"schema_version": 6, "metadata": map[string]any{"Name": "ClinePassBridge", "Version": Version, "Author": "xiao-qiu-qiu", "GitHubRepository": "https://github.com/xiao-qiu-qiu/ClinePassBridge", "Description": "Cline Pass subscription adapter with reliable streaming, usage and actual provider logs", "ConfigFields": []map[string]any{{"Name": "data_dir", "Type": "string", "Description": "Persistent plugin state directory"}}}, "capabilities": map[string]any{"auth_provider": true, "model_provider": true, "executor": true, "executor_model_scope": "both", "executor_input_formats": []string{"chat-completions"}, "executor_output_formats": []string{"chat-completions"}, "management_api": true}}
+	return map[string]any{"schema_version": 6, "metadata": map[string]any{"Name": "ClinePassBridge", "Version": Version, "Author": "xiao-qiu-qiu", "GitHubRepository": "https://github.com/xiao-qiu-qiu/ClinePassBridge", "Description": "Cline Pass 订阅接入插件：支持账号登录与 API key、可靠的流式转发，并记录用量与实际上游", "ConfigFields": []map[string]any{{"Name": "data_dir", "Type": "string", "Description": "插件状态持久化目录"}}}, "capabilities": map[string]any{"auth_provider": true, "model_provider": true, "executor": true, "executor_model_scope": "both", "executor_input_formats": []string{"chat-completions"}, "executor_output_formats": []string{"chat-completions"}, "management_api": true, "quota_provider": true}}
 }
 func (s *Service) modelRegistration() any {
 	cfg := s.config()
@@ -223,10 +234,15 @@ func (s *Service) resolveModel(model string) (string, error) {
 			return m.UpstreamID, nil
 		}
 	}
-	return "", fail(400, "model is not enabled in ClinePassBridge: "+model)
+	return "", fail(400, "ClinePassBridge 未启用该模型："+model)
 }
 func authData(c Credential, filename string) any {
-	return map[string]any{"Provider": Provider, "ID": c.ID, "FileName": filename, "Label": c.Label, "Disabled": c.Disabled, "ProxyURL": c.ProxyURL, "StorageJSON": jsonBytes(c), "Metadata": map[string]any{"type": Provider, "request_scoped_errors": []any{map[string]any{"status": 500, "match": []string{"empty response content"}, "action": "stop"}}}, "Attributes": map[string]string{"auth_kind": "api_key"}}
+	// 匹配规则必须与空内容时抛出的文案严格一致，否则 CPA 不会按预期停止重试。
+	scoped := []any{}
+	for _, rule := range requestErrorRules() {
+		scoped = append(scoped, map[string]any{"status": rule.Status, "match": rule.Match, "action": rule.Action})
+	}
+	return map[string]any{"Provider": Provider, "ID": c.ID, "FileName": filename, "Label": c.Label, "Disabled": c.Disabled, "ProxyURL": c.ProxyURL, "StorageJSON": jsonBytes(c), "Metadata": map[string]any{"type": Provider, "request_scoped_errors": scoped}, "Attributes": map[string]string{"auth_kind": c.kind()}}
 }
 func (s *Service) parseAuth(raw json.RawMessage) (any, error) {
 	var r struct {
@@ -241,8 +257,11 @@ func (s *Service) parseAuth(raw json.RawMessage) (any, error) {
 	if e := json.Unmarshal(r.RawJSON, &c); e != nil || c.Type != Provider {
 		return map[string]any{"Handled": false}, nil
 	}
-	if c.APIKey == "" {
-		return nil, fail(401, "Cline Pass credential has no api_key")
+	if c.bearerToken() == "" {
+		return nil, fail(401, "Cline Pass 凭据缺少可用的令牌")
+	}
+	if c.kind() == AuthKindOAuth && strings.TrimSpace(c.RefreshToken) == "" {
+		return nil, fail(401, "Cline Pass 凭据缺少 refresh_token，无法自动续期")
 	}
 	if c.ID == "" {
 		c.ID = strings.TrimSuffix(r.FileName, ".json")
@@ -263,7 +282,11 @@ func (s *Service) parseAuth(raw json.RawMessage) (any, error) {
 	return map[string]any{"Handled": true, "Auth": authData(c, r.FileName)}, nil
 }
 func (s *Service) refreshAuth(raw json.RawMessage) (any, error) {
-	var r struct{ StorageJSON []byte }
+	var r struct {
+		StorageJSON    []byte
+		AuthID         string
+		HostCallbackID string `json:"host_callback_id"`
+	}
 	if e := json.Unmarshal(raw, &r); e != nil {
 		return nil, e
 	}
@@ -274,16 +297,30 @@ func (s *Service) refreshAuth(raw json.RawMessage) (any, error) {
 	s.mu.RLock()
 	if current, ok := s.creds[c.ID]; ok {
 		c = current
+	} else if current, ok := s.creds[r.AuthID]; ok {
+		c = current
 	}
 	filename := s.authFiles[c.ID]
-	revoked := s.revoked[c.ID]
+	revoked := s.revoked[c.ID] || s.revoked[r.AuthID]
 	s.mu.RUnlock()
 	if revoked {
-		return nil, fail(401, "Cline Pass credential was removed")
+		return nil, fail(401, "Cline Pass 凭据已被删除")
 	}
 	if filename == "" {
 		filename = c.ID + ".json"
 	}
+	if c.kind() == AuthKindOAuth {
+		if e := s.begin(); e != nil {
+			return nil, e
+		}
+		defer s.active.Done()
+		renewed, e := s.renewOAuthCredential(c, r.HostCallbackID)
+		if e != nil {
+			return nil, e
+		}
+		return map[string]any{"Auth": authData(renewed, filename), "NextRefreshAfter": nextRefreshTime(renewed)}, nil
+	}
+	// API key 是长期静态凭据，无需续期。
 	return map[string]any{"Auth": authData(c, filename), "NextRefreshAfter": time.Now().Add(365 * 24 * time.Hour)}, nil
 }
 func (s *Service) selectedCredential(r ExecutorRequest) (Credential, error) {
@@ -299,8 +336,8 @@ func (s *Service) selectedCredential(r ExecutorRequest) (Credential, error) {
 	}
 	revoked := s.revoked[c.ID] || s.revoked[r.AuthID]
 	s.mu.RUnlock()
-	if c.APIKey == "" || c.Disabled || revoked {
-		return c, fail(401, "Cline Pass credential is missing or disabled")
+	if c.bearerToken() == "" || c.Disabled || revoked {
+		return c, fail(401, "Cline Pass 凭据缺失或已停用")
 	}
 	return c, nil
 }

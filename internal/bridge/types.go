@@ -13,6 +13,24 @@ const Version = "0.1.4"
 const Provider = "cline-pass"
 const PluginID = "clinepassbridge"
 
+// 凭据种类。空值与 AuthKindAPIKey 等价，兼容改造前只保存 api_key 的旧文件。
+const (
+	AuthKindAPIKey = "api_key"
+	AuthKindOAuth  = "oauth"
+)
+
+// emptyContentMessage 是插件自己判定“聚合后没有任何输出”时给出的提示。
+const emptyContentMessage = "上游返回了空内容"
+
+// upstreamEmptyContentHint 是 Cline 自己返回空内容时的原文提示，会经 errorMessage 透传出来，
+// 因此空内容判定与交给 CPA 的 request_scoped_errors.match 都必须同时识别它，否则原生模式的回退会失效。
+const upstreamEmptyContentHint = "empty response content"
+
+// emptyContentSignals 返回所有代表“空内容”的信号串。
+func emptyContentSignals() []string {
+	return []string{emptyContentMessage, upstreamEmptyContentHint}
+}
+
 type APIError struct {
 	Status  int
 	Kind    string
@@ -58,12 +76,43 @@ type Credential struct {
 	Type                string             `json:"type"`
 	ID                  string             `json:"id"`
 	Label               string             `json:"label"`
-	APIKey              string             `json:"api_key"`
+	APIKey              string             `json:"api_key,omitempty"`
+	AuthKind            string             `json:"auth_kind,omitempty"`
+	AccessToken         string             `json:"access_token,omitempty"`
+	RefreshToken        string             `json:"refresh_token,omitempty"`
+	ExpiresAt           time.Time          `json:"expires_at,omitempty"`
+	AccountID           string             `json:"account_id,omitempty"`
 	Disabled            bool               `json:"disabled"`
 	ProxyURL            string             `json:"proxy_url,omitempty"`
 	RequestScopedErrors []RequestErrorRule `json:"request_scoped_errors"`
 	ModelRevision       string             `json:"model_revision,omitempty"`
 }
+
+// kind 归一化凭据种类，空值按 api_key 处理。
+func (c Credential) kind() string {
+	if strings.TrimSpace(c.AuthKind) == "" {
+		return AuthKindAPIKey
+	}
+	return c.AuthKind
+}
+
+// bearerToken 返回直接填入 Authorization: Bearer 的值。
+// OAuth 凭据的 AccessToken 已按 Cline 约定带 workos: 前缀，实测缺少该前缀会返回 401。
+func (c Credential) bearerToken() string {
+	if c.kind() == AuthKindOAuth {
+		return strings.TrimSpace(c.AccessToken)
+	}
+	return strings.TrimSpace(c.APIKey)
+}
+
+// needsRefresh 判断 OAuth 令牌是否已进入续期窗口。
+func (c Credential) needsRefresh(now time.Time) bool {
+	if c.kind() != AuthKindOAuth || c.ExpiresAt.IsZero() || strings.TrimSpace(c.RefreshToken) == "" {
+		return false
+	}
+	return now.Add(oauthRefreshMargin).After(c.ExpiresAt)
+}
+
 type RequestErrorRule struct {
 	Status int      `json:"status"`
 	Match  []string `json:"match"`
@@ -71,7 +120,7 @@ type RequestErrorRule struct {
 }
 
 func requestErrorRules() []RequestErrorRule {
-	return []RequestErrorRule{{Status: 500, Match: []string{"empty response content"}, Action: "stop"}}
+	return []RequestErrorRule{{Status: 500, Match: emptyContentSignals(), Action: "stop"}}
 }
 
 type Model struct {
@@ -95,29 +144,29 @@ func defaultConfig() Config {
 func (c *Config) validate() error {
 	u, e := url.Parse(c.BaseURL)
 	if e != nil || u.Scheme != "https" || u.Host != "api.cline.bot" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || strings.TrimRight(u.Path, "/") != "/api/v1" {
-		return fail(400, "base_url must be https://api.cline.bot/api/v1")
+		return fail(400, "base_url 必须为 https://api.cline.bot/api/v1")
 	}
 	if c.TimeoutSeconds < 10 || c.TimeoutSeconds > 1800 {
-		return fail(400, "timeout_seconds must be between 10 and 1800")
+		return fail(400, "timeout_seconds 必须在 10 到 1800 之间")
 	}
 	if c.LogRetention < 50 || c.LogRetention > 10000 {
-		return fail(400, "log_retention must be between 50 and 10000")
+		return fail(400, "log_retention 必须在 50 到 10000 之间")
 	}
 	if c.MaxResponseBytes < 65536 || c.MaxResponseBytes > 64<<20 {
-		return fail(400, "max_response_bytes must be between 64 KiB and 64 MiB")
+		return fail(400, "max_response_bytes 必须在 64 KiB 到 64 MiB 之间")
 	}
 	if c.NonstreamMode != "native" && c.NonstreamMode != "native-fallback" && c.NonstreamMode != "stream-aggregate" {
-		return fail(400, "invalid nonstream_mode")
+		return fail(400, "nonstream_mode 无效")
 	}
 	seen := map[string]bool{}
 	for i := range c.Models {
 		m := &c.Models[i]
 		if strings.TrimSpace(m.ID) == "" || seen[m.ID] {
-			return fail(400, "model aliases must be nonempty and unique")
+			return fail(400, "模型别名不能为空且不能重复")
 		}
 		seen[m.ID] = true
 		if strings.TrimSpace(m.UpstreamID) == "" || strings.ContainsAny(m.ID+m.UpstreamID, "\r\n\t") {
-			return fail(400, "model identifiers must be nonempty and contain no control whitespace")
+			return fail(400, "模型标识不能为空且不能包含控制类空白字符")
 		}
 	}
 	return nil
@@ -167,7 +216,7 @@ func number(v any) int64 {
 func decodeObject(b []byte) (map[string]any, error) {
 	var j map[string]any
 	if err := json.Unmarshal(b, &j); err != nil || j == nil {
-		return nil, fail(502, "upstream returned invalid JSON")
+		return nil, fail(502, "上游返回了无效 JSON")
 	}
 	return j, nil
 }
@@ -179,7 +228,7 @@ func errorMessage(j map[string]any) string {
 	if s := str(v); s != "" {
 		return s
 	}
-	return "upstream request failed"
+	return "上游请求失败"
 }
 func statusOf(err error) int {
 	if err == nil {
@@ -195,8 +244,9 @@ func safeError(err error) string {
 		return ""
 	}
 	s := err.Error()
-	if len(s) > 500 {
-		s = s[:500]
+	// 按字符截断，避免把中文截成半个字符产生非法 UTF-8。
+	if runes := []rune(s); len(runes) > 500 {
+		s = string(runes[:500])
 	}
-	return fmt.Sprintf("%s", secretPattern.ReplaceAllString(s, "[REDACTED]"))
+	return fmt.Sprintf("%s", secretPattern.ReplaceAllString(s, "[已脱敏]"))
 }

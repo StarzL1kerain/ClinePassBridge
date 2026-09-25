@@ -26,29 +26,35 @@ func (s *Service) prepare(r ExecutorRequest) (map[string]any, Credential, string
 	if e != nil {
 		return nil, c, "", e
 	}
+	// OAuth 凭据进入续期窗口时先行续期，避免请求打到已过期的令牌上。
+	c = s.renewIfNeeded(c, r.HostCallbackID)
 	up, e := s.resolveModel(r.Model)
 	if e != nil {
 		return nil, c, "", e
 	}
 	j, e := decodeObject(r.Payload)
 	if e != nil {
-		return nil, c, "", fail(400, "invalid request JSON")
+		return nil, c, "", fail(400, "请求 JSON 无效")
 	}
 	if len(list(j["messages"])) == 0 {
-		return nil, c, "", fail(400, "messages must be a nonempty array")
+		return nil, c, "", fail(400, "messages 必须是非空数组")
 	}
 	j["model"] = up
-	// Current Pass planner silently ignores these. Never preserve a false promise of strict routing.
-	if p := object(j["provider"]); len(p) > 0 {
-		return nil, c, "", fail(400, "provider pinning is unavailable for this Cline Pass integration")
+	// 当前 Pass 规划器会静默忽略这些参数，因此不能保留“指定了 provider”的假象。
+	// 注意 object() 只对对象生效，字符串形式的 provider 也必须一并拦截。
+	if v, ok := j["provider"]; ok && v != nil {
+		return nil, c, "", fail(400, "该 Cline Pass 接入不支持指定 provider")
 	}
-	if p := object(object(j["providerOptions"])["gateway"]); len(p) > 0 {
-		return nil, c, "", fail(400, "providerOptions.gateway pinning is currently ignored by Cline; use automatic routing")
+	if v, ok := j["providerOptions"]; ok && v != nil {
+		if p := object(object(v)["gateway"]); len(p) > 0 {
+			return nil, c, "", fail(400, "Cline 当前会忽略 providerOptions.gateway 的指定，请使用自动路由")
+		}
 	}
 	return j, c, up, nil
 }
 func headers(c Credential) http.Header {
-	return http.Header{"Authorization": []string{"Bearer " + c.APIKey}, "Content-Type": []string{"application/json"}, "User-Agent": []string{"ClinePassBridge/" + Version}}
+	// OAuth 凭据的令牌已带 workos: 前缀；缺少该前缀上游会返回 401。
+	return http.Header{"Authorization": []string{"Bearer " + c.bearerToken()}, "Content-Type": []string{"application/json"}, "User-Agent": []string{"ClinePassBridge/" + Version}}
 }
 func (s *Service) request(r ExecutorRequest, c Credential, j map[string]any, stream bool) (upstreamStream, error) {
 	j["stream"] = stream
@@ -97,16 +103,16 @@ func (s *Service) openUpstream(payload any, deadline time.Time) (upstreamStream,
 		out = result.up
 		if result.err != nil {
 			s.closeUpstream(out.StreamID)
-			return out, fail(502, "upstream transport failed: "+safeError(result.err))
+			return out, fail(502, "上游传输失败："+safeError(result.err))
 		}
 	case <-timer.C:
-		return out, fail(504, "Cline upstream request timed out")
+		return out, fail(504, "Cline 上游请求超时")
 	case <-s.stopCh:
-		return out, fail(503, "ClinePassBridge is shutting down")
+		return out, fail(503, "ClinePassBridge 正在关闭")
 	}
 	out.deadline = deadline
 	if out.StreamID == "" {
-		return out, fail(502, "host returned no upstream stream")
+		return out, fail(502, "宿主未返回上游流")
 	}
 	s.mu.Lock()
 	stopped := s.stopped
@@ -116,7 +122,7 @@ func (s *Service) openUpstream(payload any, deadline time.Time) (upstreamStream,
 	s.mu.Unlock()
 	if stopped {
 		s.closeUpstream(out.StreamID)
-		return out, fail(503, "ClinePassBridge is shutting down")
+		return out, fail(503, "ClinePassBridge 正在关闭")
 	}
 	return out, nil
 }
@@ -155,14 +161,14 @@ func (s *Service) read(up upstreamStream, fn func([]byte) error) error {
 			return fail(504, "Cline upstream request timed out")
 		}
 		if e != nil {
-			return fail(502, "upstream read failed: "+safeError(e))
+			return fail(502, "读取上游失败："+safeError(e))
 		}
 		if chunk.Error != "" {
-			return fail(502, "upstream stream interrupted: "+safeError(errors.New(chunk.Error)))
+			return fail(502, "上游流中断："+safeError(errors.New(chunk.Error)))
 		}
 		total += len(chunk.Payload)
 		if total > cfg.MaxResponseBytes {
-			return fail(502, "upstream response exceeds configured limit")
+			return fail(502, "上游响应超过配置上限")
 		}
 		if len(chunk.Payload) > 0 {
 			if e = fn(chunk.Payload); e != nil {
@@ -268,7 +274,7 @@ func (s *Service) consumeSSE(us upstreamStream, model string, entry *LogEntry, a
 		if e != nil {
 			return nil, e
 		}
-		return nil, fail(502, "Cline returned non-SSE content for a streaming request")
+		return nil, fail(502, "Cline 对流式请求返回了非 SSE 内容")
 	}
 	cp := newCompletion()
 	decoder := SSEDecoder{max: s.config().MaxResponseBytes}
@@ -277,7 +283,7 @@ func (s *Service) consumeSSE(us upstreamStream, model string, entry *LogEntry, a
 			if strings.TrimSpace(string(payload)) == "[DONE]" {
 				cp.done = true
 				if !cp.allFinished() {
-					return fail(502, "upstream stream ended without finish_reason")
+					return fail(502, "上游流结束时缺少 finish_reason")
 				}
 				// CPA owns the downstream SSE envelope and terminal marker.
 				return errStreamDone
@@ -307,7 +313,7 @@ func (s *Service) consumeSSE(us upstreamStream, model string, entry *LogEntry, a
 	if e == nil && !cp.done {
 		e = decoder.End()
 		if e == nil {
-			e = fail(502, "upstream stream closed before [DONE]")
+			e = fail(502, "上游流在收到 [DONE] 之前就结束了")
 		}
 	}
 	return cp, e
@@ -334,7 +340,7 @@ func (s *Service) executeStream(r ExecutorRequest) (any, error) {
 		return failEarly(e)
 	}
 	if r.StreamID == "" {
-		return failEarly(fail(500, "host provided no output stream identifier"))
+		return failEarly(fail(500, "宿主未提供输出流标识"))
 	}
 	us, e := s.request(r, c, j, true)
 	if e != nil {
@@ -350,7 +356,7 @@ func (s *Service) executeStream(r ExecutorRequest) (any, error) {
 		var err error
 		defer func() {
 			if recover() != nil {
-				err = fail(500, "ClinePassBridge stream processing failed")
+				err = fail(500, "ClinePassBridge 流处理失败")
 			}
 			attempt.Status = statusOf(err)
 			attempt.Error = safeError(err)
@@ -370,7 +376,7 @@ func (s *Service) executeStream(r ExecutorRequest) (any, error) {
 				b = append(append([]byte("data: "), b...), []byte("\n\n")...)
 			}
 			if e := s.call("host.stream.emit", map[string]any{"stream_id": r.StreamID, "payload": b}, nil); e != nil {
-				return fail(499, "client disconnected")
+				return fail(499, "客户端已断开")
 			}
 			return nil
 		})
