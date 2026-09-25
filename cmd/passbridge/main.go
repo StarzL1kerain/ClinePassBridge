@@ -71,7 +71,7 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/xiao-qiu-qiu/ClinePassBridge/internal/bridge"
+	"github.com/StarzL1kerain/ClinePassBridge/internal/bridge"
 )
 
 const abiVersion = 1

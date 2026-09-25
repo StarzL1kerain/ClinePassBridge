@@ -1,4 +1,4 @@
-module github.com/xiao-qiu-qiu/ClinePassBridge
+module github.com/StarzL1kerain/ClinePassBridge
 
 go 1.26.0
 
