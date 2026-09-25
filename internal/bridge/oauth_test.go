@@ -357,6 +357,106 @@ func TestOAuthRefreshRenewsTokenAndSchedulesNextAttempt(t *testing.T) {
 	}
 }
 
+// 凭据 ID 必须由账号派生：名字里能看出是哪个账号（内置供应商同款风格），
+// 且同一账号重复登录会覆盖同一份凭据，而不是每次多出一条。
+func TestCredentialIDIsAccountDerivedAndFileSafe(t *testing.T) {
+	if got := credentialID("usr-1", "user@example.com"); got != PluginID+"-user@example.com" {
+		t.Fatalf("credential id = %q", got)
+	}
+	for _, tc := range []struct{ accountID, email string }{
+		{"usr-01M2W9Y7XBSS4X00YMH9NARQ4E", ""},
+		{"usr-1", "a/b\\c:d*e?f"},
+		{"usr-1", "   "},
+		{"usr-1", "../../etc/passwd"},
+	} {
+		id := credentialID(tc.accountID, tc.email)
+		if id == "" || strings.ContainsAny(id, `/\:*?"<>|`) || strings.Contains(id, "..") {
+			t.Fatalf("unsafe credential id %q (from %q / %q)", id, tc.accountID, tc.email)
+		}
+	}
+	// 同一把 key 重复粘贴要落到同一个 ID（覆盖而非新增），不同 key 必须区分开，
+	// 且文件名里不能出现明文 key。
+	if keyCredentialID("sk-same") != keyCredentialID("sk-same") {
+		t.Fatal("keyCredentialID must be stable for the same key")
+	}
+	if keyCredentialID("sk-same") == keyCredentialID("sk-other") {
+		t.Fatal("keyCredentialID must differ across keys")
+	}
+	if strings.Contains(keyCredentialID("sk-secret-value"), "sk-secret-value") {
+		t.Fatal("keyCredentialID must not embed the raw key")
+	}
+}
+
+// 会话表满时只淘汰最旧的一条：原来整体清空会把其他并发登录的会话一起干掉。
+func TestOAuthSessionLimitEvictsOldestOnly(t *testing.T) {
+	s := registeredService(t, "stream-aggregate")
+	base := time.Now()
+	for i := 0; i < oauthSessionLimit; i++ {
+		state := fmt.Sprintf("state-%d", i)
+		s.putOAuthSession(state, oauthSession{expiresAt: base.Add(time.Duration(i+1) * time.Minute)})
+	}
+	s.putOAuthSession("state-new", oauthSession{expiresAt: base.Add(time.Hour)})
+
+	s.oauthMu.Lock()
+	_, hasOldest := s.oauth["state-0"]
+	_, hasNewest := s.oauth["state-new"]
+	count := len(s.oauth)
+	s.oauthMu.Unlock()
+	if hasOldest || !hasNewest || count != oauthSessionLimit {
+		t.Fatalf("应只淘汰最旧会话：hasOldest=%v hasNewest=%v count=%d", hasOldest, hasNewest, count)
+	}
+}
+
+// 凭据 ID 现在按账号/key 派生：删除后再重新添加会落到同一个 ID，
+// 旧的删除记录必须失效，否则新凭据会被永久拒绝；记录本身也要带 TTL，不能只增不减。
+func TestRevokedCredentialStateIsClearedAndBounded(t *testing.T) {
+	s := registeredService(t, "stream-aggregate")
+	credential := Credential{Type: Provider, ID: keyCredentialID("sk-same-key-123456"), Label: "key", APIKey: "sk-same-key-123456"}
+
+	s.mu.Lock()
+	s.markRevokedLocked(credential.ID)
+	s.mu.Unlock()
+	if !s.isRevoked(credential.ID) {
+		t.Fatal("刚删除的凭据应该被拒绝")
+	}
+
+	// 宿主重新解析同一个凭据文件（= 用户重新添加）后，旧记录必须失效。
+	if _, err := s.Handle("auth.parse", jsonBytes(map[string]any{
+		"Provider": Provider, "FileName": credential.ID + ".json", "RawJSON": jsonBytes(credential),
+	})); err != nil {
+		t.Fatalf("parse credential: %v", err)
+	}
+	if s.isRevoked(credential.ID) {
+		t.Fatal("重新添加的凭据不应继续被当作已删除")
+	}
+
+	// 过期记录应被忽略。
+	s.mu.Lock()
+	s.revoked[credential.ID] = time.Now().Add(-2 * revokedTTL)
+	s.mu.Unlock()
+	if s.isRevoked(credential.ID) {
+		t.Fatal("过期的删除记录应被忽略")
+	}
+
+	// 凭据 ID 会拼进文件名，路径穿越必须被拒。
+	if _, err := s.Handle("auth.parse", jsonBytes(map[string]any{
+		"Provider": Provider, "FileName": "../../evil.json",
+		"RawJSON": jsonBytes(Credential{Type: Provider, APIKey: "sk-x-123456789"}),
+	})); err == nil {
+		t.Fatal("带路径穿越的凭据标识必须被拒绝")
+	}
+}
+
+// 脱敏必须覆盖 OAuth 的 workos:<jwt> 形态：原来字符类里没有 ':'，
+// 只会替掉 "Bearer workos"，JWT 主体照样写进日志。
+func TestSafeErrorRedactsWorkOSTokens(t *testing.T) {
+	jwt := fakeJWT(time.Now().Add(time.Hour))
+	got := safeError(errors.New("请求失败：Bearer " + workOSTokenPrefix + jwt))
+	if strings.Contains(got, jwt) || strings.Contains(got, "eyJ") {
+		t.Fatalf("token leaked into the message: %q", got)
+	}
+}
+
 func TestAPIKeyCredentialKeepsStaticRefresh(t *testing.T) {
 	s := registeredService(t, "stream-aggregate")
 	credential := Credential{Type: Provider, ID: "clinepassbridge-apikey", Label: "key", APIKey: "sk-test-123456"}

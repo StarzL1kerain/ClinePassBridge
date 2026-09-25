@@ -1,6 +1,8 @@
 package bridge
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -9,7 +11,7 @@ import (
 	"time"
 )
 
-const Version = "0.1.4"
+const Version = "0.1.5"
 const Provider = "cline-pass"
 const PluginID = "clinepassbridge"
 
@@ -111,6 +113,51 @@ func (c Credential) needsRefresh(now time.Time) bool {
 		return false
 	}
 	return now.Add(oauthRefreshMargin).After(c.ExpiresAt)
+}
+
+// credentialID 用账号派生凭据 ID：名字里能直接看出是哪个账号（内置供应商也是这个风格，
+// 如 claude-<邮箱>.json），而且同一账号重复登录会覆盖同一份凭据，而不是每次多出一条。
+func credentialID(accountID, email string) string {
+	if slug := slugifyAccount(email); slug != "" {
+		return PluginID + "-" + slug
+	}
+	if slug := slugifyAccount(accountID); slug != "" {
+		return PluginID + "-" + slug
+	}
+	return PluginID + "-" + id()
+}
+
+// keyCredentialID 用 API key 的哈希派生稳定 ID：同一把 key 重复粘贴会覆盖同一份凭据。
+// 取哈希而不是明文，避免把 key 写进文件名。
+func keyCredentialID(apiKey string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(apiKey)))
+	return PluginID + "-key-" + hex.EncodeToString(sum[:])[:12]
+}
+
+// slugifyAccount 只保留可安全用作文件名的字符（ID 会拼进 auth-dir 的文件名），
+// 其余折叠成 '-'；必须与 update/delete 的路径校验保持一致。
+func slugifyAccount(value string) string {
+	var b strings.Builder
+	dashPending := false
+	for _, r := range strings.TrimSpace(value) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+			dashPending = false
+		case r == '_' || r == '.' || r == '-' || r == '@':
+			b.WriteRune(r)
+			dashPending = false
+		default:
+			if !dashPending && b.Len() > 0 {
+				b.WriteByte('-')
+				dashPending = true
+			}
+		}
+		if b.Len() >= 48 {
+			break
+		}
+	}
+	return strings.Trim(b.String(), "-.")
 }
 
 type RequestErrorRule struct {

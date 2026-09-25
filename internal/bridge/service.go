@@ -16,30 +16,36 @@ import (
 	"time"
 )
 
-var secretPattern = regexp.MustCompile(`(?i)(?:bearer\s+|sk[-_])[a-z0-9_.-]+`)
+// secretPattern 脱敏日志里的凭据。第一段带 : 是为了覆盖 OAuth 的 workos:<jwt> 形态
+// （漏掉冒号时只会替掉 "Bearer workos"，JWT 主体照样进日志）；第三段兜底裸 JWT。
+var secretPattern = regexp.MustCompile(`(?i)(?:bearer\s+[a-z0-9_.:-]+|sk[-_][a-z0-9_.-]+|eyJ[a-z0-9_-]{10,}\.[a-z0-9_-]+\.[a-z0-9_-]+)`)
 
 type Service struct {
-	credentialMu  sync.Mutex
-	authFiles     map[string]string
-	mu            sync.RWMutex
-	cfg           Config
-	host          HostCall
-	logs          []LogEntry
-	creds         map[string]Credential
-	authDir       string
-	loaded        bool
-	stopped       bool
-	active        sync.WaitGroup
-	streams       map[string]struct{}
-	revoked       map[string]bool
-	stopCh        chan struct{}
-	logWriteError string
-	oauthMu       sync.Mutex
-	oauth         map[string]oauthSession
+	credentialMu sync.Mutex
+	authFiles    map[string]string
+	mu           sync.RWMutex
+	cfg          Config
+	host         HostCall
+	logs         []LogEntry
+	creds        map[string]Credential
+	authDir      string
+	loaded       bool
+	stopped      bool
+	active       sync.WaitGroup
+	streams      map[string]struct{}
+	// revoked 记录刚被删除的凭据 ID（带时间戳，写入时清理过期项）：用于拒绝宿主手上
+	// 那份已经过期的 StorageJSON，同时避免只增不减。
+	revoked           map[string]time.Time
+	stopCh            chan struct{}
+	logWriteError     string
+	logPersistedAt    time.Time
+	logFlushScheduled bool
+	oauthMu           sync.Mutex
+	oauth             map[string]oauthSession
 }
 
 func NewService() *Service {
-	return &Service{cfg: defaultConfig(), creds: map[string]Credential{}, authFiles: map[string]string{}, streams: map[string]struct{}{}, revoked: map[string]bool{}, oauth: map[string]oauthSession{}, stopCh: make(chan struct{})}
+	return &Service{cfg: defaultConfig(), creds: map[string]Credential{}, authFiles: map[string]string{}, streams: map[string]struct{}{}, revoked: map[string]time.Time{}, oauth: map[string]oauthSession{}, stopCh: make(chan struct{})}
 }
 func (s *Service) SetHost(h func(string, any, any) error) { s.mu.Lock(); s.host = h; s.mu.Unlock() }
 func (s *Service) call(method string, in, out any) error {
@@ -217,7 +223,7 @@ func (s *Service) refreshRegistrations() error {
 }
 
 func registration() any {
-	return map[string]any{"schema_version": 6, "metadata": map[string]any{"Name": "ClinePassBridge", "Version": Version, "Author": "StarzL1kerain", "GitHubRepository": "https://github.com/StarzL1kerain/ClinePassBridge", "Description": "Cline Pass 订阅接入插件：支持账号登录与 API key、可靠的流式转发，并记录用量与实际上游", "ConfigFields": []map[string]any{{"Name": "data_dir", "Type": "string", "Description": "插件状态持久化目录"}}}, "capabilities": map[string]any{"auth_provider": true, "model_provider": true, "executor": true, "executor_model_scope": "both", "executor_input_formats": []string{"chat-completions"}, "executor_output_formats": []string{"chat-completions"}, "management_api": true, "quota_provider": true}}
+	return map[string]any{"schema_version": 6, "metadata": map[string]any{"Name": "ClinePassBridge", "Version": Version, "Author": "StarzL1kerain", "GitHubRepository": "https://github.com/StarzL1kerain/ClinePassBridge", "Logo": "https://raw.githubusercontent.com/StarzL1kerain/ClinePassBridge/main/logo.png", "Description": "Cline Pass 订阅接入插件：支持账号登录与 API key、可靠的流式转发，并记录用量与实际上游", "ConfigFields": []map[string]any{{"Name": "data_dir", "Type": "string", "Description": "插件状态持久化目录"}}}, "capabilities": map[string]any{"auth_provider": true, "model_provider": true, "executor": true, "executor_model_scope": "both", "executor_input_formats": []string{"chat-completions"}, "executor_output_formats": []string{"chat-completions"}, "management_api": true, "quota_provider": true}}
 }
 func (s *Service) modelRegistration() any {
 	cfg := s.config()
@@ -266,12 +272,18 @@ func (s *Service) parseAuth(raw json.RawMessage) (any, error) {
 	if c.ID == "" {
 		c.ID = strings.TrimSuffix(r.FileName, ".json")
 	}
+	// 凭据 ID 会拼进 auth-dir 的文件名，必须挡住路径穿越。
+	if filepath.Base(c.ID) != c.ID || strings.ContainsAny(c.ID, "/\\") || c.ID == "." || c.ID == ".." {
+		return nil, fail(400, "凭据标识无效")
+	}
 	if c.Label == "" {
 		c.Label = c.ID
 	}
 	c.RequestScopedErrors = requestErrorRules()
 	s.mu.Lock()
 	s.creds[c.ID] = c
+	// 同一账号/key 重新出现时，之前的删除记录必须失效。
+	delete(s.revoked, c.ID)
 	if r.FileName != "" {
 		s.authFiles[c.ID] = filepath.Base(r.FileName)
 	}
@@ -301,9 +313,8 @@ func (s *Service) refreshAuth(raw json.RawMessage) (any, error) {
 		c = current
 	}
 	filename := s.authFiles[c.ID]
-	revoked := s.revoked[c.ID] || s.revoked[r.AuthID]
 	s.mu.RUnlock()
-	if revoked {
+	if s.isRevoked(c.ID, r.AuthID) {
 		return nil, fail(401, "Cline Pass 凭据已被删除")
 	}
 	if filename == "" {
@@ -334,22 +345,101 @@ func (s *Service) selectedCredential(r ExecutorRequest) (Credential, error) {
 	} else if current, ok := s.creds[r.AuthID]; ok {
 		c = current
 	}
-	revoked := s.revoked[c.ID] || s.revoked[r.AuthID]
+	revoked := s.isRevoked(c.ID, r.AuthID)
 	s.mu.RUnlock()
 	if c.bearerToken() == "" || c.Disabled || revoked {
 		return c, fail(401, "Cline Pass 凭据缺失或已停用")
 	}
 	return c, nil
 }
+
+// revokedTTL 是删除记录的有效期：它只用于拒绝宿主手上那份刚刚失效的 StorageJSON，
+// 过期即可丢弃，不能无限增长。
+const revokedTTL = time.Hour
+
+// markRevokedLocked 记下刚被删除的凭据 ID；调用方必须持有 s.mu。
+func (s *Service) markRevokedLocked(id string) {
+	if strings.TrimSpace(id) == "" {
+		return
+	}
+	if s.revoked == nil {
+		s.revoked = map[string]time.Time{}
+	}
+	s.pruneRevokedLocked()
+	s.revoked[id] = time.Now()
+}
+
+// pruneRevokedLocked 清理过期的删除记录；调用方必须持有 s.mu。
+func (s *Service) pruneRevokedLocked() {
+	now := time.Now()
+	for key, at := range s.revoked {
+		if now.Sub(at) > revokedTTL {
+			delete(s.revoked, key)
+		}
+	}
+}
+
+// isRevoked 判断给定 ID 是否在删除记录的有效期内。
+func (s *Service) isRevoked(ids ...string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, id := range ids {
+		if at, ok := s.revoked[id]; ok && time.Since(at) <= revokedTTL {
+			return true
+		}
+	}
+	return false
+}
+
+// logPersistInterval 限制日志落盘频率。原来每个请求都会持着全局锁把整个日志数组
+// （最多 log_retention 条）MarshalIndent 后重写一次，高并发下既慢又阻塞所有读写。
+const logPersistInterval = time.Second
+
 func (s *Service) appendLog(entry LogEntry) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	entry.Error = safeError(errors.New(entry.Error))
+	s.mu.Lock()
 	s.logs = append(s.logs, entry)
 	if len(s.logs) > s.cfg.LogRetention {
 		s.logs = s.logs[len(s.logs)-s.cfg.LogRetention:]
 	}
-	s.logWriteError = safeError(atomicJSON(filepath.Join(s.cfg.DataDir, "requests.json"), s.logs))
+	// 过了限流窗口就直接落盘；否则登记一次延迟落盘，保证最后一条日志也不会丢。
+	delay := logPersistInterval - time.Since(s.logPersistedAt)
+	pending := s.logFlushScheduled
+	s.logFlushScheduled = true
+	s.mu.Unlock()
+	switch {
+	case delay <= 0:
+		s.flushLogs()
+	case !pending:
+		time.AfterFunc(delay, s.flushLogs)
+	}
+}
+
+// flushLogs 把内存里的日志写入 requests.json。序列化与写盘都在锁外完成，
+// 不会阻塞其它读写。
+func (s *Service) flushLogs() {
+	s.mu.RLock()
+	snapshot := append([]LogEntry(nil), s.logs...)
+	s.mu.RUnlock()
+	err := safeError(atomicJSON(filepath.Join(s.cfg.DataDir, "requests.json"), snapshot))
+	s.mu.Lock()
+	s.logPersistedAt = time.Now()
+	s.logFlushScheduled = false
+	s.logWriteError = err
+	s.mu.Unlock()
+}
+
+// logCredentialEvent 把凭据层面的异常（令牌过期、续期失败）写进请求日志。
+// 否则这类问题只会以一个上游 401 的形式间接出现，排查时看不出根因。
+func (s *Service) logCredentialEvent(c Credential, status int, message string) {
+	s.appendLog(LogEntry{
+		ID:         id(),
+		Time:       time.Now(),
+		Model:      "(" + PluginID + " 凭据)",
+		Status:     status,
+		Credential: c.ID,
+		Error:      message,
+	})
 }
 func (s *Service) credentials() []map[string]any {
 	s.mu.RLock()

@@ -122,16 +122,23 @@ func (s *Service) quotaCredential(storage []byte, credentialID string) (Credenti
 	return c, nil
 }
 
-// clineGet 以凭据令牌访问 Cline API，并解开 {success, data} 信封。
-func (s *Service) clineGet(callbackID, path, token string, out any) error {
+// clineRequest 发出一次 Cline API GET，返回状态码与响应体。
+func (s *Service) clineRequest(callbackID, path, token string) (int, []byte, error) {
 	headers := http.Header{
 		"Accept":        []string{"application/json"},
 		"Authorization": []string{"Bearer " + token},
 	}
 	status, body, err := s.hostRequest(callbackID, http.MethodGet, s.config().BaseURL+path, headers, nil)
 	if err != nil {
-		return fail(502, "无法连接 Cline 服务："+safeError(err))
+		return status, body, fail(502, "无法连接 Cline 服务："+safeError(err))
 	}
+	return status, body, nil
+}
+
+// decodeQuotaBody 解开 {success, data} 信封。
+// 401 会被换成可操作的提示：上游原文只说 "re-authenticate your Cline account"，
+// 从字面上看不出其实是插件续期的问题。
+func decodeQuotaBody(status int, body []byte, out any) error {
 	var env struct {
 		Success bool            `json:"success"`
 		Data    json.RawMessage `json:"data"`
@@ -141,6 +148,9 @@ func (s *Service) clineGet(callbackID, path, token string, out any) error {
 		return fail(502, "Cline 返回了无效 JSON")
 	}
 	if status < 200 || status >= 300 || !env.Success {
+		if statusOr(status, 502) == http.StatusUnauthorized {
+			return fail(401, "Cline 令牌已失效且自动续期未成功，请在插件控制台重新登录 Cline 账号")
+		}
 		return fail(statusOr(status, 502), "读取额度失败："+envelopeMessage(env.Error))
 	}
 	if out != nil && len(env.Data) > 0 {
@@ -149,6 +159,28 @@ func (s *Service) clineGet(callbackID, path, token string, out any) error {
 		}
 	}
 	return nil
+}
+
+// quotaGet 以凭据访问 Cline API。access_token 只有 1 小时有效期，过期后上游返回 401；
+// 这里遇到 401 就强制续期并用新令牌重试一次，避免额度刷新被永久卡死。
+// 返回可能已续期的凭据，供随后的调用复用新令牌。
+func (s *Service) quotaGet(c Credential, callbackID, path string, out any) (Credential, error) {
+	status, body, err := s.clineRequest(callbackID, path, c.bearerToken())
+	if err != nil {
+		return c, err
+	}
+	if status == http.StatusUnauthorized && c.kind() == AuthKindOAuth && strings.TrimSpace(c.RefreshToken) != "" {
+		renewed, renewErr := s.renewOAuthCredential(c, callbackID)
+		if renewErr != nil {
+			s.logCredentialEvent(c, http.StatusUnauthorized, "Cline 令牌已过期，自动续期失败："+safeError(renewErr))
+			return c, fail(401, "Cline 令牌已过期且自动续期失败，请在插件控制台重新登录 Cline 账号")
+		}
+		c = renewed
+		if status, body, err = s.clineRequest(callbackID, path, c.bearerToken()); err != nil {
+			return c, err
+		}
+	}
+	return c, decodeQuotaBody(status, body, out)
 }
 
 type clineUser struct {
@@ -191,14 +223,16 @@ func (s *Service) fetchQuota(raw json.RawMessage) (any, error) {
 		return nil, e
 	}
 	defer s.active.Done()
-	token := c.bearerToken()
+	// 额度请求同样要先续期：access_token 只有 1 小时有效期，而续期此前只挂在模型请求
+	// 路径上（executor.prepare），于是长时间不用之后每次刷新额度都拿着过期令牌打上游、固定 401。
+	c = s.renewIfNeeded(c, r.HostCallbackID)
 
 	var plan clinePlanInfo
-	if e := s.clineGet(r.HostCallbackID, "/users/me/plan", token, &plan); e != nil {
+	if c, e = s.quotaGet(c, r.HostCallbackID, "/users/me/plan", &plan); e != nil {
 		return nil, e
 	}
 	var limits usageLimits
-	if e := s.clineGet(r.HostCallbackID, "/users/me/plan/usage-limits", token, &limits); e != nil {
+	if c, e = s.quotaGet(c, r.HostCallbackID, "/users/me/plan/usage-limits", &limits); e != nil {
 		return nil, e
 	}
 	if len(limits.Limits) == 0 {
@@ -210,13 +244,14 @@ func (s *Service) fetchQuota(raw json.RawMessage) (any, error) {
 	account := strings.TrimSpace(c.AccountID)
 	if account == "" {
 		var user clineUser
-		if e := s.clineGet(r.HostCallbackID, "/users/me", token, &user); e == nil {
+		if renewed, e := s.quotaGet(c, r.HostCallbackID, "/users/me", &user); e == nil {
+			c = renewed
 			account = strings.TrimSpace(user.ID)
 		}
 	}
 	hasBalance := false
 	if account != "" {
-		if e := s.clineGet(r.HostCallbackID, "/users/"+account+"/balance", token, &balance); e == nil {
+		if _, e := s.quotaGet(c, r.HostCallbackID, "/users/"+account+"/balance", &balance); e == nil {
 			hasBalance = true
 		}
 	}

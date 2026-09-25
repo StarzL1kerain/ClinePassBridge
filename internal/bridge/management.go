@@ -199,7 +199,7 @@ func (s *Service) importCredential(r ManagementRequest) (any, error) {
 	if len(in.Label) > 100 {
 		return managementJSON(400, map[string]any{"error": "备注长度不能超过 100 个字符"})
 	}
-	c := Credential{Type: Provider, ID: PluginID + "-" + id(), Label: strings.TrimSpace(in.Label), APIKey: in.APIKey, RequestScopedErrors: requestErrorRules()}
+	c := Credential{Type: Provider, ID: keyCredentialID(in.APIKey), Label: strings.TrimSpace(in.Label), APIKey: in.APIKey, RequestScopedErrors: requestErrorRules()}
 	if c.Label == "" {
 		c.Label = "Cline Pass"
 	}
@@ -212,6 +212,8 @@ func (s *Service) importCredential(r ManagementRequest) (any, error) {
 	s.mu.Lock()
 	s.creds[c.ID] = c
 	s.authFiles[c.ID] = c.ID + ".json"
+	// 同一把 key 重新粘贴会落到同一个 ID，旧的删除记录必须失效。
+	delete(s.revoked, c.ID)
 	if saved.Path != "" {
 		s.authDir = filepath.Dir(saved.Path)
 	}
@@ -303,7 +305,7 @@ func (s *Service) deleteCredential(credentialID string) (any, error) {
 	}
 	delete(s.creds, credentialID)
 	delete(s.authFiles, credentialID)
-	s.revoked[credentialID] = true
+	s.markRevokedLocked(credentialID)
 	return managementJSON(200, map[string]any{"deleted": true})
 }
 func (s *Service) refreshModels(callbackID string) ([]Model, error) {

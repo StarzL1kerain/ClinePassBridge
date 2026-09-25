@@ -293,7 +293,7 @@ func newOAuthCredential(data clineOAuthData) Credential {
 	}
 	c := Credential{
 		Type:                Provider,
-		ID:                  PluginID + "-" + id(),
+		ID:                  credentialID(strings.TrimSpace(data.UserInfo.ClineUserID), strings.TrimSpace(data.UserInfo.Email)),
 		Label:               label,
 		AuthKind:            AuthKindOAuth,
 		AccessToken:         workOSTokenPrefix + strings.TrimSpace(data.AccessToken),
@@ -332,7 +332,14 @@ func (s *Service) putOAuthSession(state string, session oauthSession) {
 		}
 	}
 	if len(s.oauth) >= oauthSessionLimit {
-		s.oauth = map[string]oauthSession{}
+		// 只淘汰最旧的一条：原来整体清空会连带干掉其他并发登录的进行中会话。
+		oldestKey, oldest := "", time.Time{}
+		for key, item := range s.oauth {
+			if oldestKey == "" || item.expiresAt.Before(oldest) {
+				oldestKey, oldest = key, item.expiresAt
+			}
+		}
+		delete(s.oauth, oldestKey)
 	}
 	s.oauth[state] = session
 }
@@ -543,13 +550,15 @@ func (s *Service) renewOAuthCredential(c Credential, callbackID string) (Credent
 }
 
 // renewIfNeeded 在令牌进入续期窗口时先行续期。
-// 续期失败时不阻断请求：当前令牌可能仍在有效期内，真实失败会以上游错误记录到请求日志。
+// 续期失败不阻断当前请求：本次令牌可能仍在有效期内，但必须在日志里留痕，
+// 否则下一次请求就会拿着过期令牌拿到一个上游 401，根本看不出是续期的问题。
 func (s *Service) renewIfNeeded(c Credential, callbackID string) Credential {
 	if !c.needsRefresh(time.Now()) {
 		return c
 	}
 	renewed, err := s.renewOAuthCredential(c, callbackID)
 	if err != nil {
+		s.logCredentialEvent(c, http.StatusUnauthorized, "Cline 令牌续期失败："+safeError(err))
 		return c
 	}
 	return renewed

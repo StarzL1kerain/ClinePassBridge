@@ -107,6 +107,118 @@ func metricByKey(t *testing.T, response any, key string) map[string]any {
 	return nil
 }
 
+// refreshPlan 复刻上游 /auth/refresh 的响应（设备码流程第 4 步换票）。
+func refreshPlan(accessToken string, expiry time.Time) hostPlan {
+	return jsonStatusPlan(200, map[string]any{"success": true, "data": map[string]any{
+		"accessToken":  accessToken,
+		"expiresAt":    expiry.Format(time.RFC3339),
+		"refreshToken": "rotated-or-not",
+		"userInfo":     map[string]any{"clineUserId": "usr-1"},
+	}})
+}
+
+// 额度路径必须自己续期：access_token 只有 1 小时有效期，此前续期只挂在模型请求路径上
+// （executor.prepare），于是长时间不用之后每次刷新额度都拿着过期令牌打上游、固定 401。
+func TestQuotaRenewsTokenBeforeFetching(t *testing.T) {
+	s := registeredService(t, "stream-aggregate")
+	credential := oauthCredential("usr-1")
+	credential.ExpiresAt = time.Now().Add(time.Minute) // 已进入续期窗口
+	if _, err := s.Handle("auth.parse", jsonBytes(map[string]any{
+		"Provider": Provider, "FileName": credential.ID + ".json", "RawJSON": jsonBytes(credential),
+	})); err != nil {
+		t.Fatalf("parse credential: %v", err)
+	}
+	h := newOAuthHost(
+		refreshPlan("renewed-access", time.Now().Add(time.Hour).Truncate(time.Second)),
+		planResponse(), usageLimitsResponse(), balanceResponse(0),
+	)
+	s.SetHost(h.call)
+	if _, err := s.Handle("quota.fetch", jsonBytes(map[string]any{
+		"auth_id": credential.ID, "provider": Provider, "storage_json": jsonBytes(credential),
+	})); err != nil {
+		t.Fatalf("fetch quota: %v", err)
+	}
+	calls, saved := h.snapshot()
+	if len(calls) != 4 || calls[0].url != "https://api.cline.bot/api/v1/auth/refresh" {
+		t.Fatalf("额度请求前应先续期，实际调用序列 = %#v", calls)
+	}
+	for _, call := range calls[1:] {
+		if got := call.header.Get("Authorization"); got != "Bearer "+workOSTokenPrefix+"renewed-access" {
+			t.Fatalf("%s 未使用续期后的令牌：%q", call.url, got)
+		}
+	}
+	if len(saved) != 1 || saved[0].AccessToken != workOSTokenPrefix+"renewed-access" {
+		t.Fatalf("续期后的凭据未落盘：%#v", saved)
+	}
+}
+
+// 上游 401 时强制续期并重试一次：令牌过期不该等到"下一次模型请求"才被顺手修好。
+func TestQuotaRenewsAndRetriesAfterUnauthorized(t *testing.T) {
+	s := registeredService(t, "stream-aggregate")
+	credential := oauthCredential("usr-1") // 未进入续期窗口，只可能由 401 触发续期
+	if _, err := s.Handle("auth.parse", jsonBytes(map[string]any{
+		"Provider": Provider, "FileName": credential.ID + ".json", "RawJSON": jsonBytes(credential),
+	})); err != nil {
+		t.Fatalf("parse credential: %v", err)
+	}
+	h := newOAuthHost(
+		jsonStatusPlan(401, map[string]any{"error": "Unauthorized: Please make sure you're using the latest version of Cline and re-authenticate your Cline account."}),
+		refreshPlan("renewed-access", time.Now().Add(time.Hour).Truncate(time.Second)),
+		planResponse(), usageLimitsResponse(), balanceResponse(0),
+	)
+	s.SetHost(h.call)
+	if _, err := s.Handle("quota.fetch", jsonBytes(map[string]any{
+		"auth_id": credential.ID, "provider": Provider, "storage_json": jsonBytes(credential),
+	})); err != nil {
+		t.Fatalf("401 后应续期重试并成功：%v", err)
+	}
+	calls, _ := h.snapshot()
+	if len(calls) != 5 || calls[1].url != "https://api.cline.bot/api/v1/auth/refresh" {
+		t.Fatalf("期望 401 → 续期 → 重试，实际调用序列 = %#v", calls)
+	}
+	if got := calls[2].url; got != "https://api.cline.bot/api/v1/users/me/plan" {
+		t.Fatalf("重试请求 = %q", got)
+	}
+	if got := calls[2].header.Get("Authorization"); got != "Bearer "+workOSTokenPrefix+"renewed-access" {
+		t.Fatalf("重试未使用新令牌：%q", got)
+	}
+}
+
+// 续期失败必须给出可操作的提示，并把原因写进日志 ——
+// 否则用户只能看到一个上游 401 原文，完全不知道是插件没续上。
+func TestQuotaSurfacesRenewalFailureAndLogsIt(t *testing.T) {
+	s := registeredService(t, "stream-aggregate")
+	credential := oauthCredential("usr-1")
+	if _, err := s.Handle("auth.parse", jsonBytes(map[string]any{
+		"Provider": Provider, "FileName": credential.ID + ".json", "RawJSON": jsonBytes(credential),
+	})); err != nil {
+		t.Fatalf("parse credential: %v", err)
+	}
+	h := newOAuthHost(
+		jsonStatusPlan(401, map[string]any{"error": "Unauthorized: ... re-authenticate your Cline account."}),
+		jsonStatusPlan(401, map[string]any{"success": false, "error": "invalid_grant"}),
+	)
+	s.SetHost(h.call)
+	_, err := s.Handle("quota.fetch", jsonBytes(map[string]any{
+		"auth_id": credential.ID, "provider": Provider, "storage_json": jsonBytes(credential),
+	}))
+	if err == nil || !strings.Contains(err.Error(), "重新登录") {
+		t.Fatalf("续期失败应给出可操作提示，实际 err = %v", err)
+	}
+	s.mu.RLock()
+	logs := append([]LogEntry(nil), s.logs...)
+	s.mu.RUnlock()
+	logged := false
+	for _, entry := range logs {
+		if entry.Status == http.StatusUnauthorized && strings.Contains(entry.Error, "续期失败") {
+			logged = true
+		}
+	}
+	if !logged {
+		t.Fatalf("续期失败未写进日志：%#v", logs)
+	}
+}
+
 func TestQuotaFetchReportsBalanceAndCapCeilings(t *testing.T) {
 	s := registeredService(t, "stream-aggregate")
 	credential := oauthCredential("usr-01M2W9Y7XBSS4X00YMH9NARQ4E")
