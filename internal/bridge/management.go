@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"embed"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"os"
@@ -21,7 +22,7 @@ func (s *Service) registerManagement(raw json.RawMessage) (any, error) {
 	for _, p := range []string{"status", "logs", "models", "config", "credentials", "quota"} {
 		routes = append(routes, map[string]string{"Method": "GET", "Path": apiBase + "/" + p})
 	}
-	for _, p := range []string{"models/refresh", "credentials"} {
+	for _, p := range []string{"models/refresh", "models/test", "credentials"} {
 		routes = append(routes, map[string]string{"Method": "POST", "Path": apiBase + "/" + p})
 	}
 	for _, p := range []string{"models", "config", "credentials"} {
@@ -44,6 +45,12 @@ func (s *Service) management(raw json.RawMessage) (any, error) {
 			return nil, e
 		}
 		b = []byte(strings.ReplaceAll(string(b), "__PASSBRIDGE_API_BASE__", apiBase))
+		// 控制台标题栏的 Cline 图标内联成 data URI，避免页面额外发一次请求。
+		logo, err := ui.ReadFile("ui/cline-logo.png")
+		if err != nil {
+			return nil, err
+		}
+		b = []byte(strings.ReplaceAll(string(b), "__CLINE_LOGO_DATA__", "data:image/png;base64,"+base64.StdEncoding.EncodeToString(logo)))
 		authJS, err := ui.ReadFile("ui/cpa-auth.js")
 		if err != nil {
 			return nil, err
@@ -102,6 +109,8 @@ func (s *Service) management(raw json.RawMessage) (any, error) {
 			return managementJSON(statusOf(e), map[string]any{"error": safeError(e)})
 		}
 		return managementJSON(200, map[string]any{"models": models})
+	case "POST /models/test":
+		return s.testModel(r)
 	case "GET /credentials":
 		return managementJSON(200, map[string]any{"items": s.credentials()})
 	case "GET /quota":

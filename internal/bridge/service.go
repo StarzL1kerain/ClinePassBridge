@@ -36,6 +36,8 @@ type Service struct {
 	// revoked 记录刚被删除的凭据 ID（带时间戳，写入时清理过期项）：用于拒绝宿主手上
 	// 那份已经过期的 StorageJSON，同时避免只增不减。
 	revoked           map[string]time.Time
+	// modelTests 记录正在进行的「模型测试」，用于限制并发（key = 模型 + 凭据）。
+	modelTests        map[string]bool
 	stopCh            chan struct{}
 	logWriteError     string
 	logPersistedAt    time.Time
@@ -45,7 +47,7 @@ type Service struct {
 }
 
 func NewService() *Service {
-	return &Service{cfg: defaultConfig(), creds: map[string]Credential{}, authFiles: map[string]string{}, streams: map[string]struct{}{}, revoked: map[string]time.Time{}, oauth: map[string]oauthSession{}, stopCh: make(chan struct{})}
+	return &Service{cfg: defaultConfig(), creds: map[string]Credential{}, authFiles: map[string]string{}, streams: map[string]struct{}{}, revoked: map[string]time.Time{}, modelTests: map[string]bool{}, oauth: map[string]oauthSession{}, stopCh: make(chan struct{})}
 }
 func (s *Service) SetHost(h func(string, any, any) error) { s.mu.Lock(); s.host = h; s.mu.Unlock() }
 func (s *Service) call(method string, in, out any) error {

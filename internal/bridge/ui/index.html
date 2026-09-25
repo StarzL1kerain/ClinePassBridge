@@ -2,6 +2,31 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
+  <script>
+    // 在样式与页面内容绘制之前先把 CPA 主题定下来，避免刷新时先闪一下系统深色主题。
+    (() => {
+      function applyTheme(value) {
+        document.documentElement.dataset.theme = value === 'dark' || value === 'white' ? value : 'light';
+      }
+      function syncTheme() {
+        try {
+          if (window.parent !== window) {
+            document.documentElement.classList.add('embedded');
+            applyTheme(window.parent.document.documentElement.getAttribute('data-theme'));
+            return true;
+          }
+        } catch { if (window.parent !== window) document.documentElement.classList.add('embedded'); }
+        try {
+          const saved = JSON.parse(localStorage.getItem('cli-proxy-theme') || '{}').state?.theme;
+          applyTheme(saved === 'auto' ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'white') : saved);
+        } catch { applyTheme(null); }
+        return false;
+      }
+      if (syncTheme()) new MutationObserver(syncTheme).observe(window.parent.document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'style'] });
+      window.addEventListener('storage', (event) => { if (event.key === 'cli-proxy-theme') syncTheme(); });
+      matchMedia('(prefers-color-scheme: dark)').addEventListener('change', syncTheme);
+    })();
+  </script>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
   <meta name="cpa-api-base" content="__PASSBRIDGE_API_BASE__">
@@ -9,6 +34,7 @@
   <style>
     :root {
       color-scheme: light;
+      background: var(--bg);
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Microsoft YaHei", sans-serif;
       font-size: 14px;
       line-height: 1.5;
@@ -29,7 +55,7 @@
     .topbar, .heading, .section-head, .toolbar, .pagination, .row-main, .detail-head, .field-line, .credential-row, .model-row { display: flex; align-items: center; gap: 12px; }
     .topbar { min-height: 32px; }
     .brand { display: flex; align-items: center; gap: 11px; min-width: 0; font-weight: 700; font-size: 15px; }
-    .brandmark { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 6px; background: var(--accent); color: #fff; font-size: 16px; font-weight: 800; flex: none; }
+    .brandmark { width: 28px; height: 28px; display: block; border-radius: 6px; object-fit: contain; flex: none; }
     .brand span:last-child { overflow-wrap: anywhere; }
     .version { color: var(--muted); font-size: 12px; white-space: nowrap; }
     h1 { margin: 0; font-size: 20px; line-height: 1.3; letter-spacing: 0; }
@@ -200,7 +226,7 @@
 <body>
   <main class="shell">
     <div class="topbar">
-      <div class="brand"><span class="brandmark" aria-hidden="true">P</span><span>ClinePassBridge</span></div>
+      <div class="brand"><img class="brandmark" src="__CLINE_LOGO_DATA__" width="28" height="28" alt=""><span>ClinePassBridge</span></div>
     </div>
     <div class="notice error" id="logPersistenceError" role="alert" hidden></div>
     <div class="notice error" id="globalError" role="alert" hidden></div>
@@ -234,7 +260,7 @@
       <div class="section-head"><h2>插件配置</h2></div>
       <div class="config-grid">
         <div class="panel">
-          <div class="panel-head"><div><h2>模型映射</h2><p class="panel-hint">客户端名称与 Cline Pass 上游模型</p></div><div class="row-actions"><button class="button compact primary" id="openModel" type="button">添加模型</button></div></div>
+          <div class="panel-head"><div><h2>模型映射</h2><p class="panel-hint">客户端名称与 Cline Pass 上游模型；可用右侧凭据对单个模型发一条最短请求做连通性测试</p></div><div class="row-actions"><select class="control" id="modelTestCredential" aria-label="测试凭据"><option value="">请先添加并启用凭据</option></select><button class="button compact primary" id="openModel" type="button">添加模型</button></div></div>
           <div id="modelList" aria-live="polite"><div class="empty">正在读取模型…</div></div>
           <p class="inline-state" id="modelState"></p>
         </div>
@@ -307,26 +333,6 @@
     const PAGE_SIZE = 50;
     const $ = (id) => document.getElementById(id);
     const state = { key: '', authType: 'bearer', page: 0, total: 0, logsController: null, providers: new Set(), models: [], editingModelIndex: -1, modelBusy: false, config: null, toastTimer: 0, modelCandidates: [], selectedCandidates: new Set(), candidateBusy: false, candidateSnapshot: [], fetchingModels: false, editingCredentialId: '', credentialBusy: false };
-    function applyTheme(value) {
-      document.documentElement.dataset.theme = value === 'dark' || value === 'white' ? value : 'light';
-    }
-    function syncTheme() {
-      try {
-        if (window.parent !== window) {
-          document.documentElement.classList.add('embedded');
-          applyTheme(window.parent.document.documentElement.getAttribute('data-theme'));
-          return true;
-        }
-      } catch { if (window.parent !== window) document.documentElement.classList.add('embedded'); }
-      try {
-        const saved = JSON.parse(localStorage.getItem('cli-proxy-theme') || '{}').state?.theme;
-        applyTheme(saved === 'auto' ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'white') : saved);
-      } catch { applyTheme(null); }
-      return false;
-    }
-    if (syncTheme()) new MutationObserver(syncTheme).observe(window.parent.document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'style'] });
-    window.addEventListener('storage', (event) => { if (event.key === 'cli-proxy-theme') syncTheme(); });
-    matchMedia('(prefers-color-scheme: dark)').addEventListener('change', syncTheme);
     const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
     const present = (value) => value !== null && value !== undefined && String(value).trim() !== '';
     const shown = (value, fallback = '未记录') => present(value) ? esc(value) : fallback;
@@ -585,10 +591,51 @@
       state.models = Array.isArray(data?.models) ? data.models.map((model) => ({ id: model.id, upstream_id: model.upstream_id, providers: Array.isArray(model.providers) ? [...model.providers] : [] })) : [];
       for (const model of state.models) for (const provider of model.providers) if (present(provider)) state.providers.add(String(provider));
       renderProviderOptions();
-      $('modelList').innerHTML = state.models.length ? state.models.map((model, index) => `<div class="model-row"><div class="model-main"><div class="primary-text mono">${shown(model.id)}</div><div class="subtext mono">→ ${shown(model.upstream_id)}</div></div><div class="row-actions"><button class="button compact edit-model" type="button" data-index="${index}">编辑</button><button class="button compact danger delete-model" type="button" data-index="${index}">删除</button></div></div>`).join('') : '<div class="empty">暂无模型映射</div>';
+      $('modelList').innerHTML = state.models.length ? state.models.map((model, index) => {
+        const test = modelTestResults.get(modelTestKey(model));
+        return `<div class="model-row"><div class="model-main"><div class="primary-text mono">${shown(model.id)}</div><div class="subtext mono">→ ${shown(model.upstream_id)}</div>${modelTestHTML(test)}</div><div class="row-actions"><button class="button compact test-model" type="button" data-index="${index}" ${$('modelTestCredential').value && !test?.pending ? '' : 'disabled'}>${test?.pending ? '测试中…' : '测试'}</button><button class="button compact edit-model" type="button" data-index="${index}">编辑</button><button class="button compact danger delete-model" type="button" data-index="${index}">删除</button></div></div>`;
+      }).join('') : '<div class="empty">暂无模型映射</div>';
       if (state.editingModelIndex >= state.models.length) resetModelForm();
       if ($('modelCandidateDialog').open) renderCandidateList();
     }
+    // ---- 模型测试：用指定凭据对单个模型发一条最短请求，结果直接显示在该模型行下方 ----
+    const modelTestResults = new Map();
+    const modelTestKey = (model) => JSON.stringify([model.id, model.upstream_id]);
+    function renderTestCredentialOptions(items) {
+      const select = $('modelTestCredential');
+      const enabled = items.filter((item) => item.enabled !== false);
+      const current = select.value;
+      select.innerHTML = enabled.length ? enabled.map((item) => `<option value="${esc(item.id)}">${shown(item.label, '未命名')}</option>`).join('') : '<option value="">请先添加并启用凭据</option>';
+      if (enabled.some((item) => item.id === current)) select.value = current;
+    }
+    function modelTestHTML(test) {
+      if (!test) return '';
+      if (test.pending) return '<div class="subtext">测试中…</div>';
+      const seconds = (Number(test.duration_ms || 0) / 1000).toFixed(1);
+      const head = `${test.ok ? '通过' : '失败'} · HTTP ${shown(test.status, '?')} · ${seconds} 秒${present(test.ttft_ms) ? ` · 首字 ${esc(test.ttft_ms)} ms` : ''}`;
+      const detail = present(test.error) ? `<div class="subtext mono">${esc(String(test.error).slice(0, 600))}</div>` : '';
+      return `<div class="subtext">${head}</div>${detail}`;
+    }
+    async function runModelTest(index) {
+      const model = state.models[index];
+      const credentialID = $('modelTestCredential').value;
+      if (!model || !credentialID) return;
+      const key = modelTestKey(model);
+      if (modelTestResults.get(key)?.pending) return;
+      modelTestResults.set(key, { pending: true });
+      renderModels({ models: state.models });
+      try {
+        modelTestResults.set(key, await api('/models/test', { method: 'POST', body: { model: model.id, upstream_id: model.upstream_id, credential_id: credentialID } }));
+      } catch (error) {
+        modelTestResults.set(key, { ok: false, error: error.message, duration_ms: 0 });
+      }
+      renderModels({ models: state.models });
+    }
+    $('modelTestCredential').addEventListener('change', () => renderModels({ models: state.models }));
+    $('modelList').addEventListener('click', (event) => {
+      const button = event.target.closest('.test-model');
+      if (button) runModelTest(Number(button.dataset.index));
+    });
     async function saveModels(next) {
       await api('/models', { method: 'PUT', body: { models: next } });
       renderModels(await api('/models'));
@@ -629,6 +676,7 @@
     }
     function renderCredentials(data) {
       const items = Array.isArray(data?.items) ? data.items : [];
+      renderTestCredentialOptions(items);
       $('credentialList').innerHTML = items.length ? items.map((item) => `<div class="credential-row"><div class="credential-main"><div class="primary-text">${shown(item.label, '未命名')}</div><div class="subtext mono">${shown(item.id, '无 ID')} · ${item.enabled === false ? '已停用' : '已配置'}</div></div><div class="row-actions"><button class="button compact edit-credential" type="button" data-id="${esc(item.id)}" data-label="${esc(item.label)}">编辑</button><button class="button compact danger remove-credential" type="button" data-id="${esc(item.id)}" data-label="${esc(item.label)}">删除</button></div></div>`).join('') : '<div class="empty">尚未导入凭据</div>';
     }
     async function loadConfig() {
