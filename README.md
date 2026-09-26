@@ -201,8 +201,18 @@ docker build --platform linux/amd64 -f Dockerfile.build --output type=local,dest
 
 ## 版本与开发记录
 
-本文档描述 **v0.1.15** 的功能集：除早先的 API key 接入、模型映射与流式转发外，
+本文档描述 **v0.1.16** 的功能集：除早先的 API key 接入、模型映射与流式转发外，
 v0.1.4 新增了**账号登录（WorkOS 设备码）**与**额度上报**，v0.1.7 吸收了上游 `v0.1.6` 里不冲突的部分。
+
+v0.1.16 **模型规格改为自动获取**（不用手填）：
+
+- 上游有一个更完整的模型目录 `GET /ai/cline/models`（实测 458 条），字段含
+  **`context_length`** 与 **`top_provider.max_completion_tokens`** —— 这正是宿主 `model_registrar`
+  要的两项。插件在「获取上游模型」时顺带拉一次，按**名字最后一段**对齐
+  （该目录写 `deepseek/deepseek-v4.1-flash`，Pass 商品写 `cline-pass/deepseek-v4.1-flash`）后自动填上。
+- 只填**空值**，不覆盖手动填过的；已保存的映射里空着的规格也会被补上并存盘，
+  从而触发宿主重新注册 —— 也就是**你不需要动任何配置，规格就会自己补齐**。
+- 拉取失败只记一条日志，不影响"获取上游模型"本身（规格是展示增强项）。
 
 v0.1.15 申报**模型规格**，让"模型参数"不再丢失：
 

@@ -741,11 +741,14 @@ func TestCatalogRefreshUsesPassOffersAndPreservesAliases(t *testing.T) {
 		request, _ := payload.(map[string]any)
 		switch method {
 		case "host.http.do_stream":
-			requestedURL = str(request["url"])
-			requestedMethod = str(request["method"])
-			callbackID = str(request["host_callback_id"])
-			if headers, ok := request["headers"].(http.Header); ok {
-				hadAuthorization = headers.Get("Authorization") != ""
+			// 只记录 Pass 商品目录那一次请求；规格目录是后加的第二跳（见下面的 stream_read）。
+			if url := str(request["url"]); strings.HasSuffix(url, "/ai/cline/recommended-models") {
+				requestedURL = url
+				requestedMethod = str(request["method"])
+				callbackID = str(request["host_callback_id"])
+				if headers, ok := request["headers"].(http.Header); ok {
+					hadAuthorization = headers.Get("Authorization") != ""
+				}
 			}
 			*out.(*upstreamStream) = upstreamStream{StatusCode: 200, StreamID: "catalog", Headers: http.Header{"Content-Type": []string{"application/json"}}}
 		case "host.http.stream_read":
@@ -753,7 +756,8 @@ func TestCatalogRefreshUsesPassOffersAndPreservesAliases(t *testing.T) {
 			if readCount == 1 {
 				*out.(*readChunk) = readChunk{Payload: jsonBytes(catalog), Done: true}
 			} else {
-				return errors.New("catalog was read more than once")
+				// 第二跳是规格目录（/ai/cline/models）：这里返回空表，表示这次没取到规格。
+				*out.(*readChunk) = readChunk{Payload: jsonBytes(map[string]any{"data": []any{}}), Done: true}
 			}
 		case "host.http.stream_close":
 			return nil

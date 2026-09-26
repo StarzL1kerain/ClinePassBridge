@@ -387,5 +387,120 @@ func (s *Service) refreshModels(callbackID string) ([]Model, error) {
 		models = append(models, candidate)
 		seen[modelID] = true
 	}
+	// 规格自动填充：上游更完整的目录（/ai/cline/models）里有 context_length 与
+	// top_provider.max_completion_tokens，按"名字最后一段"匹配后自动补上 —— 不用手填。
+	specs := s.fetchModelSpecs(callbackID)
+	for i := range models {
+		applyModelSpec(&models[i], specs)
+	}
+	// 已保存的映射里空着的规格也顺手补上（只填空值，不覆盖用户填过的），
+	// 并存盘触发宿主重新注册，这样宿主侧立刻能看到规格。
+	cfg := s.config()
+	changed := false
+	for i := range cfg.Models {
+		if applyModelSpec(&cfg.Models[i], specs) {
+			changed = true
+		}
+	}
+	if changed {
+		if e := s.saveConfig(cfg); e != nil {
+			s.appendLog(LogEntry{ID: id(), Time: time.Now().UTC(), Model: "(" + PluginID + " 模型规格)", Status: 410,
+				Error: "自动补全模型规格后保存失败（已保存的映射未更新）：" + safeError(e)})
+		}
+	}
 	return models, nil
+}
+
+// applyModelSpec 按"模型名最后一段"取出规格，只填空值；返回是否发生了改动。
+func applyModelSpec(m *Model, specs map[string]clineModelSpec) bool {
+	spec, ok := specs[tailName(m.UpstreamID)]
+	if !ok {
+		return false
+	}
+	changed := false
+	if m.ContextLength == 0 && spec.ContextLength > 0 {
+		m.ContextLength = spec.ContextLength
+		changed = true
+	}
+	if m.MaxCompletionTokens == 0 && spec.MaxCompletionTokens > 0 {
+		m.MaxCompletionTokens = spec.MaxCompletionTokens
+		changed = true
+	}
+	return changed
+}
+
+// tailName 取模型 id 的最后一段：cline-pass/deepseek-v4.1-flash → deepseek-v4.1-flash。
+// 上游两个目录的命名不同（deepseek/deepseek-v4.1-flash ↔ cline-pass/deepseek-v4.1-flash），
+// 只能靠这一段对齐。
+func tailName(id string) string {
+	if i := strings.LastIndex(strings.TrimSpace(id), "/"); i >= 0 {
+		return strings.TrimSpace(id)[i+1:]
+	}
+	return strings.TrimSpace(id)
+}
+
+// fetchModelSpecs 拉取上游完整模型目录并建规格索引。失败只记一条日志、返回空表：
+// 规格是展示增强项，不能因为这一次拉取失败让整个"获取上游模型"失败。
+func (s *Service) fetchModelSpecs(callbackID string) map[string]clineModelSpec {
+	out := map[string]clineModelSpec{}
+	// 带上任一可用凭据的令牌：Pass 商品目录是公开的，但规格目录不保证匿名可读。
+	headers := http.Header{"Accept": []string{"application/json"}}
+	s.mu.RLock()
+	for _, c := range s.creds {
+		if token := c.bearerToken(); token != "" {
+			headers.Set("Authorization", "Bearer "+token)
+			break
+		}
+	}
+	s.mu.RUnlock()
+	up, e := s.openUpstream(map[string]any{"host_callback_id": callbackID, "method": "GET", "headers": headers, "url": s.config().BaseURL + "/ai/cline/models"}, time.Time{})
+	if e != nil {
+		s.appendLog(LogEntry{ID: id(), Time: time.Now().UTC(), Model: "(" + PluginID + " 模型规格)", Status: 410,
+			Error: "读取上游模型规格失败（不影响刷新与请求）：" + safeError(e)})
+		return out
+	}
+	b, e := s.readJSON(up)
+	if e != nil {
+		return out
+	}
+	j, e := decodeObject(b)
+	if e != nil {
+		return out
+	}
+	items := list(j["data"])
+	if len(items) == 0 {
+		items = list(j["models"])
+	}
+	for _, v := range items {
+		m := object(v)
+		id := str(m["id"])
+		key := tailName(id)
+		if key == "" {
+			continue
+		}
+		var spec clineModelSpec
+		if f, ok := m["context_length"].(float64); ok && f > 0 {
+			spec.ContextLength = int(f)
+		}
+		if top := object(m["top_provider"]); len(top) > 0 {
+			if f, ok := top["max_completion_tokens"].(float64); ok && f > 0 {
+				spec.MaxCompletionTokens = int(f)
+			}
+			if spec.ContextLength == 0 {
+				if f, ok := top["context_length"].(float64); ok && f > 0 {
+					spec.ContextLength = int(f)
+				}
+			}
+		}
+		if spec.ContextLength > 0 || spec.MaxCompletionTokens > 0 {
+			out[key] = spec
+		}
+	}
+	return out
+}
+
+// clineModelSpec 是上游目录里能拿到的模型规格。
+type clineModelSpec struct {
+	ContextLength       int
+	MaxCompletionTokens int
 }
