@@ -208,9 +208,13 @@ func (s *Service) importCredential(r ManagementRequest) (any, error) {
 	if len(in.Label) > 100 {
 		return managementJSON(400, map[string]any{"error": "备注长度不能超过 100 个字符"})
 	}
-	// 先用这把 key 问一次上游账号，好把凭据命名成 key-<邮箱>（与账号登录那套命名一致）。
-	// 拿不到就退回 key 的哈希，导入照常成功。
-	accountID, email := s.resolveKeyAccount(r.HostCallbackID, in.APIKey)
+	// 先用这把 key 问一次上游账号：既好把凭据命名成 key-<邮箱>（与账号登录那套命名一致），
+	// 也能在导入时就发现"这把 key 根本无效"——仪表盘上的 key 只在创建时完整显示一次，
+	// 之后复制到的是掩码值，粘贴时若不拦住，会变成一条看似正常、其实永远 401 的凭据。
+	accountID, email, accountErr := s.resolveKeyAccount(r.HostCallbackID, in.APIKey)
+	if code := statusOf(accountErr); code == http.StatusUnauthorized || code == http.StatusForbidden {
+		return managementJSON(code, map[string]any{"error": "这把 API key 被上游拒绝：可能复制到的是页面上的掩码值，或该 key 已被撤销。请在 app.cline.bot → Settings → API Keys 重新生成，并在创建后立刻复制完整值"})
+	}
 	c := Credential{Type: Provider, ID: keyCredentialID(accountID, email, in.APIKey), Label: strings.TrimSpace(in.Label), APIKey: in.APIKey, AccountID: accountID, RequestScopedErrors: requestErrorRules()}
 	if c.Label == "" {
 		c.Label = email

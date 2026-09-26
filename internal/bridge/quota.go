@@ -180,7 +180,13 @@ func (s *Service) quotaGet(c Credential, callbackID, path string, out any) (Cred
 			return c, err
 		}
 	}
-	return c, decodeQuotaBody(status, body, out)
+	err = decodeQuotaBody(status, body, out)
+	// 401 对 API key 来说就是"key 本身无效"，而 decodeQuotaBody 里那句提示是给
+	// OAuth 令牌写的（重新登录/续期），套在 key 上会把人引到错误的方向。
+	if err != nil && statusOr(status, 502) == http.StatusUnauthorized && c.kind() != AuthKindOAuth {
+		return c, fail(401, "Cline API key 无效或已被撤销，请在 app.cline.bot → Settings → API Keys 重新生成后更新这条凭据")
+	}
+	return c, err
 }
 
 type clineUser struct {
@@ -189,18 +195,18 @@ type clineUser struct {
 }
 
 // resolveKeyAccount 用 API key 问一次 /users/me，拿到账号 id 与邮箱。
-// 用途是把凭据命名成 key-<邮箱>（并记下账号 id，省掉后续查额度时的一次解析调用）。
-// 失败不阻塞导入：退回哈希命名，名字不够友好而已。实测 API key 能读这个接口。
-func (s *Service) resolveKeyAccount(callbackID, apiKey string) (string, string) {
+// 用途是把凭据命名成 key-<邮箱>（并记下账号 id，省掉后续查额度时的一次解析调用），
+// 同时在导入时就能发现"这把 key 根本无效"。实测 API key 能读这个接口。
+func (s *Service) resolveKeyAccount(callbackID, apiKey string) (string, string, error) {
 	status, body, err := s.clineRequest(callbackID, "/users/me", apiKey)
 	if err != nil {
-		return "", ""
+		return "", "", err
 	}
 	var user clineUser
 	if e := decodeQuotaBody(status, body, &user); e != nil {
-		return "", ""
+		return "", "", e
 	}
-	return strings.TrimSpace(user.ID), strings.TrimSpace(user.Email)
+	return strings.TrimSpace(user.ID), strings.TrimSpace(user.Email), nil
 }
 
 type clinePlanInfo struct {
