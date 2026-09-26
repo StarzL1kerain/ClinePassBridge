@@ -35,7 +35,7 @@ type Service struct {
 	streams      map[string]struct{}
 	// revoked 记录刚被删除的凭据 ID（带时间戳，写入时清理过期项）：用于拒绝宿主手上
 	// 那份已经过期的 StorageJSON，同时避免只增不减。
-	revoked           map[string]time.Time
+	revoked map[string]time.Time
 	// modelTests 记录正在进行的「模型测试」，用于限制并发（key = 模型 + 凭据）。
 	modelTests        map[string]bool
 	stopCh            chan struct{}
@@ -443,13 +443,63 @@ func (s *Service) logCredentialEvent(c Credential, status int, message string) {
 		Error:      message,
 	})
 }
+
+// credentials 列出插件托管的凭据。列出前会核对 auth-dir 里的文件是否还在：
+// 凭据文件被外部删除（例如在宿主的认证文件页里删掉）时，内存里的记录会变成一条
+// "列表里还显示、删除又因读不到文件而失败"的幽灵记录，这里顺手把它清掉。
 func (s *Service) credentials() []map[string]any {
+	type entry struct {
+		c    Credential
+		file string
+	}
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-	out := []map[string]any{}
+	dir := s.authDir
+	items := make([]entry, 0, len(s.creds))
 	for _, c := range s.creds {
-		out = append(out, map[string]any{"id": c.ID, "label": c.Label, "enabled": !c.Disabled})
+		file := s.authFiles[c.ID]
+		if file == "" {
+			file = c.ID + ".json"
+		}
+		items = append(items, entry{c: c, file: file})
+	}
+	s.mu.RUnlock()
+	out := []map[string]any{}
+	stale := []entry{}
+	for _, it := range items {
+		if !authFileExists(dir, it.file) {
+			stale = append(stale, it)
+			continue
+		}
+		out = append(out, map[string]any{"id": it.c.ID, "label": it.c.Label, "enabled": !it.c.Disabled})
+	}
+	if len(stale) > 0 {
+		s.mu.Lock()
+		for _, it := range stale {
+			// 加锁期间文件可能又回来了（或刚被重新导入），不能误删。
+			if authFileExists(dir, it.file) {
+				continue
+			}
+			if current, ok := s.authFiles[it.c.ID]; ok && current != it.file {
+				continue
+			}
+			delete(s.creds, it.c.ID)
+			delete(s.authFiles, it.c.ID)
+		}
+		s.mu.Unlock()
+		for _, it := range stale {
+			s.logCredentialEvent(it.c, 410, "凭据文件已不在 auth-dir，已从列表移除")
+		}
 	}
 	sort.Slice(out, func(i, j int) bool { return str(out[i]["id"]) < str(out[j]["id"]) })
 	return out
+}
+
+// authFileExists 判断凭据文件是否还在 auth-dir 里。目录未知时一律返回 true：
+// 宁可不清理，也不能在拿不到 auth-dir 时把全部凭据误判成幽灵记录。
+func authFileExists(dir, file string) bool {
+	if dir == "" || file == "" {
+		return true
+	}
+	_, err := os.Stat(filepath.Join(dir, file))
+	return err == nil || !os.IsNotExist(err)
 }
