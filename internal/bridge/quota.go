@@ -227,9 +227,20 @@ func (s *Service) fetchQuota(raw json.RawMessage) (any, error) {
 	// 路径上（executor.prepare），于是长时间不用之后每次刷新额度都拿着过期令牌打上游、固定 401。
 	c = s.renewIfNeeded(c, r.HostCallbackID)
 
+	// /users/me/plan 只提供套餐名、窗口上限与当前周期，属于展示增强项。
+	// 用 API key 认证时该接口可能不开放（第三方用量工具同样只读 usage-limits），
+	// 那种情况（404/405 等）降级处理：记一条日志，窗口照常展示。
+	// 但 401/403 是凭据层面的问题（过期、续期失败、无权限），必须照旧报错 ——
+	// 否则会把"令牌坏了"伪装成"只是少了套餐名"。
 	var plan clinePlanInfo
-	if c, e = s.quotaGet(c, r.HostCallbackID, "/users/me/plan", &plan); e != nil {
-		return nil, e
+	switch planned, planErr := s.quotaGet(c, r.HostCallbackID, "/users/me/plan", &plan); {
+	case planErr == nil:
+		c = planned
+	case statusOf(planErr) == 401 || statusOf(planErr) == 403:
+		return nil, planErr
+	default:
+		s.logCredentialEvent(c, statusOf(planErr), "套餐信息 /users/me/plan 不可用，仅展示额度窗口")
+		plan = clinePlanInfo{}
 	}
 	var limits usageLimits
 	if c, e = s.quotaGet(c, r.HostCallbackID, "/users/me/plan/usage-limits", &limits); e != nil {

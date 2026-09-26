@@ -172,8 +172,17 @@ docker build --platform linux/amd64 -f Dockerfile.build --output type=local,dest
 
 ## 版本与开发记录
 
-本文档描述 **v0.1.8** 的功能集：除早先的 API key 接入、模型映射与流式转发外，
+本文档描述 **v0.1.9** 的功能集：除早先的 API key 接入、模型映射与流式转发外，
 v0.1.4 新增了**账号登录（WorkOS 设备码）**与**额度上报**，v0.1.7 吸收了上游 `v0.1.6` 里不冲突的部分。
+
+v0.1.9 让额度查询在"套餐接口不可用"时降级 —— 为**只用 API key** 的用法铺路：
+
+- 三个额度接口改成**互不牵连**：`/users/me/plan` 只提供套餐名、窗口上限与当前周期，
+  取不到时只记一条日志，**额度窗口照常展示**；真正必需的是 `/users/me/plan/usage-limits`。
+  此前 `/users/me/plan` 一挂，整个额度查询就报错，面板上表现为"获取失败"，看不出窗口其实能取到。
+- 依据：Cline 官方文档说明 **API key 是程序化访问的推荐方式**，且两种凭据用同一种
+  `Authorization: Bearer` 头；第三方用量工具（CodexBar）就是用 **API key** 读
+  `GET /users/me/plan/usage-limits` 拿三个滚动窗口的。而 `/users/me/plan` 对 API key 未必开放。
 
 v0.1.8 修掉一条"删不掉的幽灵凭据记录"：
 
