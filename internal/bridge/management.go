@@ -98,7 +98,39 @@ func (s *Service) management(raw json.RawMessage) (any, error) {
 		if in.Models == nil {
 			return managementJSON(400, map[string]any{"error": "models 必须是数组"})
 		}
-		cfg.Models = *in.Models
+		// 保留已有的上游元数据与规格（name/description/tags/context_length/max_completion_tokens）：
+		// 前端保存时可能只回传 id 与 upstream_id（例如它拿的是"刷新自动补规格之前"的快照），
+		// 不保留的话，刚自动填好的规格会被这一次保存原样覆盖掉。
+		previous := map[string]Model{}
+		for _, m := range cfg.Models {
+			previous[m.UpstreamID] = m
+		}
+		next := *in.Models
+		for i := range next {
+			old, ok := previous[next[i].UpstreamID]
+			if !ok {
+				continue
+			}
+			if next[i].Name == "" {
+				next[i].Name = old.Name
+			}
+			if next[i].Description == "" {
+				next[i].Description = old.Description
+			}
+			if len(next[i].Tags) == 0 {
+				next[i].Tags = old.Tags
+			}
+			if next[i].ContextLength == 0 {
+				next[i].ContextLength = old.ContextLength
+			}
+			if next[i].MaxCompletionTokens == 0 {
+				next[i].MaxCompletionTokens = old.MaxCompletionTokens
+			}
+			if len(next[i].Providers) == 0 {
+				next[i].Providers = old.Providers
+			}
+		}
+		cfg.Models = next
 		if e := s.saveConfig(cfg); e != nil {
 			return managementJSON(statusOf(e), map[string]any{"error": safeError(e)})
 		}

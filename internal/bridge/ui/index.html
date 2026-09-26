@@ -754,7 +754,9 @@
         if (!Array.isArray(result?.models)) throw new Error('模型目录响应缺少候选列表');
         const current = await api('/models');
         if (!Array.isArray(current?.models)) throw new Error('现有模型列表读取失败');
-        renderModels(current);
+        // 重新拉一次模型列表：刷新时刚把规格自动补上，界面要显示补好的值，
+        // 否则接下来任何一次"应用"都会拿着旧快照把规格覆盖回去。
+        renderModels(await api('/models'));
         state.candidateSnapshot = structuredClone(current.models);
         const unique = new Set();
         state.modelCandidates = result.models.map((model) => ({ id: String(model?.id ?? ''), upstream_id: String(model?.upstream_id ?? ''), name: String(model?.name ?? ''), description: String(model?.description ?? ''), tags: Array.isArray(model?.tags) ? [...model.tags] : [] })).filter((model) => {
