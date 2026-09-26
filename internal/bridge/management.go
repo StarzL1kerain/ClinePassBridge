@@ -475,31 +475,27 @@ func tailName(id string) string {
 // 规格是展示增强项，不能因为这一次拉取失败让整个"获取上游模型"失败。
 func (s *Service) fetchModelSpecs(callbackID string) map[string]clineModelSpec {
 	out := map[string]clineModelSpec{}
-	// 带上任一可用凭据的令牌：Pass 商品目录是公开的，但规格目录不保证匿名可读。
-	headers := http.Header{"Accept": []string{"application/json"}}
+	// 带上任一可用凭据的令牌（规格目录不保证匿名可读）。
+	token := ""
 	s.mu.RLock()
 	for _, c := range s.creds {
-		if token := c.bearerToken(); token != "" {
-			headers.Set("Authorization", "Bearer "+token)
+		if value := c.bearerToken(); value != "" {
+			token = value
 			break
 		}
 	}
 	s.mu.RUnlock()
-	payload := map[string]any{"method": "GET", "headers": headers, "url": s.config().BaseURL + "/ai/cline/models"}
-	if callbackID != "" {
-		payload["host_callback_id"] = callbackID
-	}
-	up, e := s.openUpstream(payload, time.Time{})
-	if e != nil {
+	// 走 clineRequest：与额度请求同一套策略（传输层抖动与 408/429/5xx 自动重试 3 次）。
+	status, body, err := s.clineRequest(callbackID, "/ai/cline/models", token)
+	if err != nil {
 		s.appendLog(LogEntry{ID: id(), Time: time.Now().UTC(), Model: "(" + PluginID + " 模型规格)", Status: 410,
-			Error: "读取上游模型规格失败（不影响刷新与请求）：" + safeError(e)})
+			Error: "读取上游模型规格失败（不影响刷新与请求）：" + safeError(err)})
 		return out
 	}
-	b, e := s.readJSON(up)
-	if e != nil {
+	if status < 200 || status >= 300 {
 		return out
 	}
-	j, e := decodeObject(b)
+	j, e := decodeObject(body)
 	if e != nil {
 		return out
 	}
