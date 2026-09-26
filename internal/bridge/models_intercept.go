@@ -41,11 +41,32 @@ func (s *Service) interceptModelsResponse(raw json.RawMessage) (any, error) {
 			known[upstream] = m
 		}
 	}
+	// 上游目录里的规格缓存：用于给"不是本插件注册、但名字对得上"的模型补规格
+	// （例如同一个模型通过 CPA 的内置 OpenAI 兼容路由接入，名字相同却没有参数）。
+	s.mu.RLock()
+	specs := s.modelSpecs
+	fetched := s.modelSpecsFetched
+	s.mu.RUnlock()
+	if !fetched {
+		// 还没拉过就异步补一次，不在响应路径上等网络。
+		s.fetchModelSpecsAsync()
+	}
 	changed := false
 	for _, entry := range list.Data {
 		id, _ := entry["id"].(string)
 		m, ok := known[id]
 		if !ok {
+			// 不是我们注册的：按名字最后一段在目录缓存里找找看。
+			if spec, hit := specs[tailName(id)]; hit {
+				if spec.ContextLength > 0 && entry["context_length"] == nil {
+					entry["context_length"] = spec.ContextLength
+					changed = true
+				}
+				if spec.MaxCompletionTokens > 0 && entry["max_completion_tokens"] == nil {
+					entry["max_completion_tokens"] = spec.MaxCompletionTokens
+					changed = true
+				}
+			}
 			continue
 		}
 		// 只补缺的字段，已有值不动（宿主将来自己带上时不会冲突）。

@@ -36,6 +36,11 @@ type Service struct {
 	// revoked 记录刚被删除的凭据 ID（带时间戳，写入时清理过期项）：用于拒绝宿主手上
 	// 那份已经过期的 StorageJSON，同时避免只增不减。
 	revoked map[string]time.Time
+	// modelSpecs 缓存上游完整目录里的规格（按"名字最后一段"索引）。
+	// 刷新模型时填充；拦截 /v1/models 响应时用它给条目补规格，避免在响应路径上发网络请求。
+	modelSpecs         map[string]clineModelSpec
+	modelSpecsFetched  bool
+	modelSpecsFetching bool
 	// modelTests 记录正在进行的「模型测试」，用于限制并发（key = 模型 + 凭据）。
 	modelTests        map[string]bool
 	stopCh            chan struct{}
@@ -47,7 +52,7 @@ type Service struct {
 }
 
 func NewService() *Service {
-	return &Service{cfg: defaultConfig(), creds: map[string]Credential{}, authFiles: map[string]string{}, streams: map[string]struct{}{}, revoked: map[string]time.Time{}, modelTests: map[string]bool{}, oauth: map[string]oauthSession{}, stopCh: make(chan struct{})}
+	return &Service{cfg: defaultConfig(), creds: map[string]Credential{}, authFiles: map[string]string{}, streams: map[string]struct{}{}, revoked: map[string]time.Time{}, modelTests: map[string]bool{}, modelSpecs: map[string]clineModelSpec{}, oauth: map[string]oauthSession{}, stopCh: make(chan struct{})}
 }
 func (s *Service) SetHost(h func(string, any, any) error) { s.mu.Lock(); s.host = h; s.mu.Unlock() }
 func (s *Service) call(method string, in, out any) error {

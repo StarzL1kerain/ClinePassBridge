@@ -7,7 +7,7 @@
       "logo": "https://raw.githubusercontent.com/StarzL1kerain/ClinePassBridge/main/logo.png",
       "description": "让 Cline Pass 订阅接入 CPA：一把 API key 即可 —— 模型请求与额度查询都走它，订阅令牌不参与请求链路（也支持 WorkOS 设备码账号登录）；上报套餐、余额与 5 小时 / 7 天 / 30 天滚动窗口额度，可靠的流式与非流式转发，并内置模型映射与模型连通性测试。 / Connect Cline Pass subscriptions to CPA with a single API key: it covers both model requests and quota, keeping the subscription token out of the request path (WorkOS device-code sign-in is also supported). Plan, balance and 5-hour / 7-day / 30-day rolling windows are reported to the dashboard, reliable streaming and non-streaming forwarding, plus model mapping and per-model connectivity tests in the built-in console.",
       "author": "StarzL1kerain",
-      "version": "0.1.18",
+      "version": "0.1.19",
       "repository": "https://github.com/StarzL1kerain/ClinePassBridge",
       "homepage": "https://github.com/StarzL1kerain/ClinePassBridge",
       "license": "MIT",

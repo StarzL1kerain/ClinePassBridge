@@ -485,7 +485,11 @@ func (s *Service) fetchModelSpecs(callbackID string) map[string]clineModelSpec {
 		}
 	}
 	s.mu.RUnlock()
-	up, e := s.openUpstream(map[string]any{"host_callback_id": callbackID, "method": "GET", "headers": headers, "url": s.config().BaseURL + "/ai/cline/models"}, time.Time{})
+	payload := map[string]any{"method": "GET", "headers": headers, "url": s.config().BaseURL + "/ai/cline/models"}
+	if callbackID != "" {
+		payload["host_callback_id"] = callbackID
+	}
+	up, e := s.openUpstream(payload, time.Time{})
 	if e != nil {
 		s.appendLog(LogEntry{ID: id(), Time: time.Now().UTC(), Model: "(" + PluginID + " 模型规格)", Status: 410,
 			Error: "读取上游模型规格失败（不影响刷新与请求）：" + safeError(e)})
@@ -528,7 +532,33 @@ func (s *Service) fetchModelSpecs(callbackID string) map[string]clineModelSpec {
 			out[key] = spec
 		}
 	}
+	if len(out) > 0 {
+		s.mu.Lock()
+		s.modelSpecs = out
+		s.modelSpecsFetched = true
+		s.mu.Unlock()
+	}
 	return out
+}
+
+// fetchModelSpecsAsync 在后台补一次规格目录（不阻塞响应路径）。
+// 同一时刻只跑一个；失败不会写缓存，下次拦截还会再试。
+func (s *Service) fetchModelSpecsAsync() {
+	s.mu.Lock()
+	if s.modelSpecsFetching {
+		s.mu.Unlock()
+		return
+	}
+	s.modelSpecsFetching = true
+	s.mu.Unlock()
+	go func() {
+		defer func() {
+			s.mu.Lock()
+			s.modelSpecsFetching = false
+			s.mu.Unlock()
+		}()
+		s.fetchModelSpecs("")
+	}()
 }
 
 // clineModelSpec 是上游目录里能拿到的模型规格。
