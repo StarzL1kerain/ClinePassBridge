@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const Version = "0.1.13"
+const Version = "0.1.15"
 const Provider = "cline-pass"
 const PluginID = "clinepassbridge"
 
@@ -181,6 +181,16 @@ type Model struct {
 	ID         string   `json:"id" yaml:"id"`
 	UpstreamID string   `json:"upstream_id" yaml:"upstream_id"`
 	Providers  []string `json:"providers" yaml:"providers"`
+	// Name / Description / Tags 来自上游目录（/ai/cline/recommended-models），只用于展示。
+	// 上游的 description 常带模型规格（例如 "… with 1M context window"），刷新时若不接住，
+	// CPA 与控制台里就只剩一个干巴巴的 id —— 这正是"看不到模型最初参数"的原因。
+	Name        string   `json:"name,omitempty" yaml:"name,omitempty"`
+	Description string   `json:"description,omitempty" yaml:"description,omitempty"`
+	Tags        []string `json:"tags,omitempty" yaml:"tags,omitempty"`
+	// 规格字段：与 CPA 自身配置里的同名项一致（openai-compatibility 的 models[]），
+	// 由插件通过 model_registrar 申报给宿主；留 0 表示不申报（宿主按未知处理）。
+	ContextLength       int `json:"context_length,omitempty" yaml:"context_length,omitempty"`
+	MaxCompletionTokens int `json:"max_completion_tokens,omitempty" yaml:"max_completion_tokens,omitempty"`
 }
 type Config struct {
 	DataDir          string  `json:"data_dir" yaml:"data_dir"`

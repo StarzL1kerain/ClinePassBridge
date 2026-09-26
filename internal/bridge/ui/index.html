@@ -260,7 +260,7 @@
       <div class="section-head"><h2>插件配置</h2></div>
       <div class="config-grid">
         <div class="panel">
-          <div class="panel-head"><div><h2>模型映射</h2><p class="panel-hint">客户端名称与 Cline Pass 上游模型；可用右侧凭据对单个模型发一条最短请求做连通性测试</p></div><div class="row-actions"><select class="control" id="modelTestCredential" aria-label="测试凭据"><option value="">请先添加并启用凭据</option></select><button class="button compact primary" id="openModel" type="button">添加模型</button></div></div>
+          <div class="panel-head"><div><h2>模型映射</h2><p class="panel-hint">左侧是<strong>客户端里填的 model 名</strong>（宿主按它找凭据，必须存在）；右侧是转发给 Cline 的上游 id。上游名字已自动注册，两种都能请求到；右侧凭据可对单个模型做连通性测试。</p></div><div class="row-actions"><select class="control" id="modelTestCredential" aria-label="测试凭据"><option value="">请先添加并启用凭据</option></select><button class="button compact primary" id="openModel" type="button">添加模型</button></div></div>
           <div id="modelList" aria-live="polite"><div class="empty">正在读取模型…</div></div>
           <p class="inline-state" id="modelState"></p>
         </div>
@@ -301,7 +301,11 @@
     <button class="button fetch-models" id="refreshModels" type="button"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 6.1A8 8 0 0 1 20 12M4 12a8 8 0 0 0 13.9 5.9"/></svg><span>获取上游模型</span></button>
     <form class="form-stack" id="modelForm" autocomplete="off">
       <div class="field"><label for="modelId">客户端模型名称</label><input class="control mono" id="modelId" required placeholder="例如 deepseek-v4.1-flash" autocomplete="off"></div>
+      <p class="panel-hint">这是<strong>你在客户端里填的 model 名</strong>（宿主按它找能服务该模型的凭据，所以它必须已注册）。上游那套名字（如 <code>cline-pass/…</code>）插件也会自动注册，两种都能请求到；想省事就让两边填同一个名字（透传）。</p>
       <div class="field"><label for="upstreamId">Cline Pass 上游模型</label><input class="control mono" id="upstreamId" required placeholder="例如 cline-pass/deepseek-v4.1-flash" autocomplete="off"></div>
+      <div class="field"><label for="modelContext">上下文长度（context_length）</label><input class="control mono" id="modelContext" type="number" min="0" step="1" placeholder="例如 1000000，可留空" autocomplete="off"></div>
+      <div class="field"><label for="modelMaxTokens">最大输出（max_completion_tokens）</label><input class="control mono" id="modelMaxTokens" type="number" min="0" step="1" placeholder="例如 65536，可留空" autocomplete="off"></div>
+      <p class="panel-hint">这两项就是 CPA 里的<strong>模型规格</strong>，名称与 CPA 自身配置里的同名项一致。<strong>插件模型不会被自动补全</strong>（CPA 的模型目录只收录内置厂商），留空则宿主按未知处理 —— 这也正是"直接加到 CPA 时规格正确、换成插件后规格不对"的原因。上面「获取上游模型」带回来的 description 通常就写着规格（例如 with 1M context window），可照着填。</p>
       <p class="inline-state" id="modelDialogState" role="alert"></p>
       <div class="dialog-actions"><button class="button" id="cancelModelEdit" type="button">取消</button><button class="button primary" id="saveModel" type="submit">添加模型</button></div>
     </form>
@@ -588,12 +592,12 @@
       $('refreshModels').hidden = false;
     }
     function renderModels(data) {
-      state.models = Array.isArray(data?.models) ? data.models.map((model) => ({ id: model.id, upstream_id: model.upstream_id, providers: Array.isArray(model.providers) ? [...model.providers] : [] })) : [];
+      state.models = Array.isArray(data?.models) ? data.models.map((model) => ({ id: model.id, upstream_id: model.upstream_id, providers: Array.isArray(model.providers) ? [...model.providers] : [], name: String(model.name ?? ''), description: String(model.description ?? ''), tags: Array.isArray(model.tags) ? [...model.tags] : [], context_length: Number(model.context_length || 0), max_completion_tokens: Number(model.max_completion_tokens || 0) })) : [];
       for (const model of state.models) for (const provider of model.providers) if (present(provider)) state.providers.add(String(provider));
       renderProviderOptions();
       $('modelList').innerHTML = state.models.length ? state.models.map((model, index) => {
         const test = modelTestResults.get(modelTestKey(model));
-        return `<div class="model-row"><div class="model-main"><div class="primary-text mono">${shown(model.id)}</div><div class="subtext mono">→ ${shown(model.upstream_id)}</div>${modelTestHTML(test)}</div><div class="row-actions"><button class="button compact test-model" type="button" data-index="${index}" ${$('modelTestCredential').value && !test?.pending ? '' : 'disabled'}>${test?.pending ? '测试中…' : '测试'}</button><button class="button compact edit-model" type="button" data-index="${index}">编辑</button><button class="button compact danger delete-model" type="button" data-index="${index}">删除</button></div></div>`;
+        return `<div class="model-row"><div class="model-main"><div class="primary-text mono">${shown(model.id)}</div><div class="subtext mono">→ ${shown(model.upstream_id)}</div>${modelMetaHTML(model)}${modelTestHTML(test)}</div><div class="row-actions"><button class="button compact test-model" type="button" data-index="${index}" ${$('modelTestCredential').value && !test?.pending ? '' : 'disabled'}>${test?.pending ? '测试中…' : '测试'}</button><button class="button compact edit-model" type="button" data-index="${index}">编辑</button><button class="button compact danger delete-model" type="button" data-index="${index}">删除</button></div></div>`;
       }).join('') : '<div class="empty">暂无模型映射</div>';
       if (state.editingModelIndex >= state.models.length) resetModelForm();
       if ($('modelCandidateDialog').open) renderCandidateList();
@@ -607,6 +611,20 @@
       const current = select.value;
       select.innerHTML = enabled.length ? enabled.map((item) => `<option value="${esc(item.id)}">${shown(item.label, '未命名')}</option>`).join('') : '<option value="">请先添加并启用凭据</option>';
       if (enabled.some((item) => item.id === current)) select.value = current;
+    }
+    // 展示上游目录里的模型元数据：name（与 id 不同时才显示）、description（模型规格常写在这里）、tags。
+    function modelMetaHTML(model) {
+      const rows = [];
+      if (present(model.name) && model.name !== model.id) rows.push(`<div class="subtext">${esc(model.name)}</div>`);
+      if (present(model.description)) rows.push(`<div class="subtext">${esc(model.description)}</div>`);
+      const tags = Array.isArray(model.tags) ? model.tags.filter((tag) => present(tag)) : [];
+      if (tags.length) rows.push(`<div class="subtext">${tags.map((tag) => `#${esc(tag)}`).join(' ')}</div>`);
+      // 申报过的规格（会随 model_registrar 交给宿主，这里同步显示，便于确认填对了）
+      const specs = [];
+      if (Number(model.context_length) > 0) specs.push(`上下文 ${Number(model.context_length).toLocaleString('zh-CN')}`);
+      if (Number(model.max_completion_tokens) > 0) specs.push(`最大输出 ${Number(model.max_completion_tokens).toLocaleString('zh-CN')}`);
+      if (specs.length) rows.push(`<div class="subtext">${specs.join(' · ')}</div>`);
+      return rows.join('');
     }
     function modelTestHTML(test) {
       if (!test) return '';
@@ -660,7 +678,7 @@
     }
     function visibleCandidates() {
       const query = $('candidateSearch').value.trim().toLowerCase();
-      return state.modelCandidates.map((model, index) => ({ ...model, index })).filter((model) => !query || model.id.toLowerCase().includes(query) || model.upstream_id.toLowerCase().includes(query));
+      return state.modelCandidates.map((model, index) => ({ ...model, index })).filter((model) => !query || model.id.toLowerCase().includes(query) || model.upstream_id.toLowerCase().includes(query) || String(model.description || '').toLowerCase().includes(query));
     }
     function renderCandidateList() {
       const existing = new Set(state.candidateSnapshot.map(modelKey));
@@ -668,7 +686,7 @@
       $('candidateList').innerHTML = visible.length ? visible.map((model) => {
         const added = existing.has(modelKey(model));
         const conflict = candidateConflict(model);
-        return `<label class="candidate-row"><input class="candidate-check" type="checkbox" data-index="${model.index}" ${conflict || state.candidateBusy ? 'disabled' : ''} ${state.selectedCandidates.has(modelKey(model)) ? 'checked' : ''}><span class="model-main"><strong class="mono">${esc(model.id)}</strong><span class="subtext mono" style="display:block">→ ${esc(model.upstream_id)}</span></span>${conflict ? '<span class="badge">名称已被自定义映射占用</span>' : added ? '<span class="badge">已添加</span>' : ''}</label>`;
+        return `<label class="candidate-row"><input class="candidate-check" type="checkbox" data-index="${model.index}" ${conflict || state.candidateBusy ? 'disabled' : ''} ${state.selectedCandidates.has(modelKey(model)) ? 'checked' : ''}><span class="model-main"><strong class="mono">${esc(model.id)}</strong><span class="subtext mono" style="display:block">→ ${esc(model.upstream_id)}</span>${model.description ? '<span class="subtext" style="display:block">' + esc(model.description) + '</span>' : ''}</span>${conflict ? '<span class="badge">名称已被自定义映射占用</span>' : added ? '<span class="badge">已添加</span>' : ''}</label>`;
       }).join('') : '<div class="candidate-empty">没有匹配的模型</div>';
       updateCandidateCount();
       $('selectCandidates').disabled = state.candidateBusy || !visible.some((m) => !candidateConflict(m));
@@ -739,7 +757,7 @@
         renderModels(current);
         state.candidateSnapshot = structuredClone(current.models);
         const unique = new Set();
-        state.modelCandidates = result.models.map((model) => ({ id: String(model?.id ?? ''), upstream_id: String(model?.upstream_id ?? '') })).filter((model) => {
+        state.modelCandidates = result.models.map((model) => ({ id: String(model?.id ?? ''), upstream_id: String(model?.upstream_id ?? ''), name: String(model?.name ?? ''), description: String(model?.description ?? ''), tags: Array.isArray(model?.tags) ? [...model.tags] : [] })).filter((model) => {
           const key = model.id;
           if (!model.id || !model.upstream_id || unique.has(key)) return false;
           unique.add(key);
@@ -817,6 +835,8 @@
         state.editingModelIndex = index;
         $('modelId').value = model.id ?? '';
         $('upstreamId').value = model.upstream_id ?? '';
+        $('modelContext').value = Number(model.context_length || 0) > 0 ? String(model.context_length) : '';
+        $('modelMaxTokens').value = Number(model.max_completion_tokens || 0) > 0 ? String(model.max_completion_tokens) : '';
         $('modelFormTitle').textContent = '编辑模型映射';
         $('saveModel').textContent = '保存映射';
         $('refreshModels').hidden = true;
@@ -857,7 +877,8 @@
       if (state.models.some((model, index) => index !== state.editingModelIndex && String(model.id).toLowerCase() === id.toLowerCase())) { $('modelDialogState').textContent = '客户端模型名称已存在'; return; }
       const next = state.models.map((model) => ({ ...model }));
       const original = next[state.editingModelIndex];
-      const item = { id, upstream_id, providers: original?.providers || [] };
+      // 编辑模型时保留上游元数据（name/description/tags），否则一编辑就被抹掉。
+      const item = { id, upstream_id, providers: original?.providers || [], name: original?.name || '', description: original?.description || '', tags: Array.isArray(original?.tags) ? original.tags : [], context_length: Math.max(0, Number($('modelContext').value) || 0), max_completion_tokens: Math.max(0, Number($('modelMaxTokens').value) || 0) };
       if (state.editingModelIndex < 0) next.push(item); else next[state.editingModelIndex] = item;
       state.modelBusy = true;
       $('saveModel').disabled = true;

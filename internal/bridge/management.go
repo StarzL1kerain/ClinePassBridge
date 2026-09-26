@@ -372,7 +372,19 @@ func (s *Service) refreshModels(callbackID string) ([]Model, error) {
 		if strings.TrimPrefix(modelID, "cline-pass/") == "" || strings.ContainsAny(modelID, "\r\n\t") {
 			continue
 		}
-		models = append(models, Model{ID: strings.TrimPrefix(modelID, "cline-pass/"), UpstreamID: modelID})
+		// 上游条目除 id 外还带 name/description/tags，把它们一起接住（description 里就是模型规格）。
+		candidate := Model{
+			ID:          strings.TrimPrefix(modelID, "cline-pass/"),
+			UpstreamID:  modelID,
+			Name:        strings.TrimSpace(str(m["name"])),
+			Description: strings.TrimSpace(str(m["description"])),
+		}
+		for _, tag := range list(m["tags"]) {
+			if value := strings.TrimSpace(str(tag)); value != "" {
+				candidate.Tags = append(candidate.Tags, value)
+			}
+		}
+		models = append(models, candidate)
 		seen[modelID] = true
 	}
 	return models, nil

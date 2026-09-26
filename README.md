@@ -16,6 +16,14 @@ ClinePassBridge 是 [CLIProxyAPI (CPA)](https://github.com/router-for-me/CLIProx
 - 凭据交给 CPA 的 `auth-dir` 保存；插件状态目录不保存凭据。
 - 通过 CPA 的额度能力展示 Cline Pass 的套餐、余额与三个滚动窗口的额度上限（**管理面板需支持插件额度**，官方版尚未支持，见下方「额度」一节），也可用插件自带的 `GET /v0/management/clinepassbridge/quota` 直接查看。
 - 将客户端模型名映射为指定上游 ID，用户填写的两个名称均原样保存；默认别名 `deepseek-flash` 指向 `cline-pass/deepseek-v4.1-flash`，可在管理页维护其他映射。
+
+  **两个名字的分工**（最容易搞混，务必分清）：
+  **左侧「客户端模型名称」= 你在客户端里填的 `model`** —— 宿主按它寻找"哪个凭据能服务这个模型"，所以它**必须**是已注册的名字；
+  **右侧「上游模型 ID」= 插件转发给 Cline 的标识**，必须是 Cline 目录里真实存在的 id。
+  插件会把**两侧名字都注册**，因此 `deepseek-v4.1-flash` 与 `cline-pass/deepseek-v4.1-flash` 都能请求到（插件的
+  `resolveModel` 本来就两种都认，缺的只是让宿主也知道这个名字）。若两个名字都请求不到，宿主会返回
+  `auth_not_found: no auth available (… model=…)` —— 那说明这个名字没被注册（改完映射后可用模型行的「测试」按钮验证）。
+  额度/备注字段与模型路由无关：凭据的备注只影响列表显示，不参与匹配。
 - 非流式支持 `native`（解包 Cline 原生 `success/data`）、`native-fallback`（原生遇到空内容错误时尝试流式聚合）和 `stream-aggregate`（直接由 SSE 聚合）三种模式。默认 `stream-aggregate`，直接聚合上游 SSE 后返回 JSON，跳过原生非流式尝试。
 - 流式请求转发为真正的 SSE，处理跨网络分块的事件、用量与终止信号；从上游响应元数据记录实际 provider，缺失时显示“未知”，不根据请求参数猜测。
 - 管理页展示凭据、模型映射、请求状态、耗时、用量、实际 provider 和尝试记录。
@@ -193,8 +201,28 @@ docker build --platform linux/amd64 -f Dockerfile.build --output type=local,dest
 
 ## 版本与开发记录
 
-本文档描述 **v0.1.13** 的功能集：除早先的 API key 接入、模型映射与流式转发外，
+本文档描述 **v0.1.15** 的功能集：除早先的 API key 接入、模型映射与流式转发外，
 v0.1.4 新增了**账号登录（WorkOS 设备码）**与**额度上报**，v0.1.7 吸收了上游 `v0.1.6` 里不冲突的部分。
+
+v0.1.15 申报**模型规格**，让"模型参数"不再丢失：
+
+- 新增 `model_registrar` 能力并实现 `model.register`，把 **`ContextLength` / `MaxCompletionTokens`**
+  申报给宿主。CPA 自己的模型目录只收录内置厂商（实测 `models.json` 里只有 claude / gemini / codex /
+  kimi 等，**没有任何 deepseek 或 cline 条目**），插件模型不会被自动补全 —— 这正是"同一个模型，
+  **直接加到 CPA 时规格正确、换成插件后规格就不对**"的原因（那条路是你在 CPA 配置里自己填了同名两项）。
+- 两个规格字段在控制台的模型弹窗里可填（字段名与 CPA 自身配置一致：`context_length` /
+  `max_completion_tokens`），模型行会显示已申报的规格；「获取上游模型」带回来的 `description`
+  通常写着规格（例如 `with 1M context window`），照着填即可。
+- 同时注册**「客户端名」与「上游名」两个模型条目**：宿主按客户端请求的模型名找凭据，只注册一个名字
+  就会出现"有的名字能请求、有的报 `no auth available`（503）"。
+- 上游目录的 `name` / `description` / `tags` 也不再丢弃（刷新时原样接住并在控制台展示）。
+
+v0.1.14 把"两个名字"的提示写进界面，并让上游那套名字也能直接请求：
+
+- 模型弹窗与模型面板都标注了左侧/右侧各自的用途（左侧=客户端里填的 model 名，宿主按它找凭据）；
+- 插件现在会把两侧名字都注册给宿主，因此 `deepseek-v4.1-flash` 与 `cline-pass/deepseek-v4.1-flash`
+  都能请求到；
+- 模型的 `name`/`description`/`tags` 在编辑时不再被抹掉。
 
 v0.1.13 把重试规则与 CommandCodeBridge 对齐：
 
