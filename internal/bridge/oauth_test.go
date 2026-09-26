@@ -374,16 +374,24 @@ func TestCredentialIDIsAccountDerivedAndFileSafe(t *testing.T) {
 			t.Fatalf("unsafe credential id %q (from %q / %q)", id, tc.accountID, tc.email)
 		}
 	}
-	// 同一把 key 重复粘贴要落到同一个 ID（覆盖而非新增），不同 key 必须区分开，
+	// 同一把 key（或同一账号）重复粘贴要落到同一个 ID（覆盖而非新增），不同 key 必须区分开，
 	// 且文件名里不能出现明文 key。
-	if keyCredentialID("sk-same") != keyCredentialID("sk-same") {
+	if keyCredentialID("", "", "sk-same") != keyCredentialID("", "", "sk-same") {
 		t.Fatal("keyCredentialID must be stable for the same key")
 	}
-	if keyCredentialID("sk-same") == keyCredentialID("sk-other") {
+	if keyCredentialID("", "", "sk-same") == keyCredentialID("", "", "sk-other") {
 		t.Fatal("keyCredentialID must differ across keys")
 	}
-	if strings.Contains(keyCredentialID("sk-secret-value"), "sk-secret-value") {
+	if strings.Contains(keyCredentialID("", "", "sk-secret-value"), "sk-secret-value") {
 		t.Fatal("keyCredentialID must not embed the raw key")
+	}
+	// 能问到账号时按账号命名：名字里带邮箱，且同账号的不同 key 覆盖同一份凭据。
+	named := keyCredentialID("usr-1", "user@example.com", "sk-1")
+	if !strings.HasPrefix(named, PluginID+"-key-") || !strings.Contains(named, "user@example.com") {
+		t.Fatalf("keyCredentialID = %q, 期望带上账号邮箱", named)
+	}
+	if named != keyCredentialID("usr-1", "user@example.com", "sk-2") {
+		t.Fatal("same account must map to the same credential id")
 	}
 }
 
@@ -411,7 +419,7 @@ func TestOAuthSessionLimitEvictsOldestOnly(t *testing.T) {
 // 旧的删除记录必须失效，否则新凭据会被永久拒绝；记录本身也要带 TTL，不能只增不减。
 func TestRevokedCredentialStateIsClearedAndBounded(t *testing.T) {
 	s := registeredService(t, "stream-aggregate")
-	credential := Credential{Type: Provider, ID: keyCredentialID("sk-same-key-123456"), Label: "key", APIKey: "sk-same-key-123456"}
+	credential := Credential{Type: Provider, ID: keyCredentialID("", "", "sk-same-key-123456"), Label: "key", APIKey: "sk-same-key-123456"}
 
 	s.mu.Lock()
 	s.markRevokedLocked(credential.ID)

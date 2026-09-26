@@ -208,7 +208,13 @@ func (s *Service) importCredential(r ManagementRequest) (any, error) {
 	if len(in.Label) > 100 {
 		return managementJSON(400, map[string]any{"error": "备注长度不能超过 100 个字符"})
 	}
-	c := Credential{Type: Provider, ID: keyCredentialID(in.APIKey), Label: strings.TrimSpace(in.Label), APIKey: in.APIKey, RequestScopedErrors: requestErrorRules()}
+	// 先用这把 key 问一次上游账号，好把凭据命名成 key-<邮箱>（与账号登录那套命名一致）。
+	// 拿不到就退回 key 的哈希，导入照常成功。
+	accountID, email := s.resolveKeyAccount(r.HostCallbackID, in.APIKey)
+	c := Credential{Type: Provider, ID: keyCredentialID(accountID, email, in.APIKey), Label: strings.TrimSpace(in.Label), APIKey: in.APIKey, AccountID: accountID, RequestScopedErrors: requestErrorRules()}
+	if c.Label == "" {
+		c.Label = email
+	}
 	if c.Label == "" {
 		c.Label = "Cline Pass"
 	}

@@ -184,7 +184,23 @@ func (s *Service) quotaGet(c Credential, callbackID, path string, out any) (Cred
 }
 
 type clineUser struct {
-	ID string `json:"id"`
+	ID    string `json:"id"`
+	Email string `json:"email"`
+}
+
+// resolveKeyAccount 用 API key 问一次 /users/me，拿到账号 id 与邮箱。
+// 用途是把凭据命名成 key-<邮箱>（并记下账号 id，省掉后续查额度时的一次解析调用）。
+// 失败不阻塞导入：退回哈希命名，名字不够友好而已。实测 API key 能读这个接口。
+func (s *Service) resolveKeyAccount(callbackID, apiKey string) (string, string) {
+	status, body, err := s.clineRequest(callbackID, "/users/me", apiKey)
+	if err != nil {
+		return "", ""
+	}
+	var user clineUser
+	if e := decodeQuotaBody(status, body, &user); e != nil {
+		return "", ""
+	}
+	return strings.TrimSpace(user.ID), strings.TrimSpace(user.Email)
 }
 
 type clinePlanInfo struct {

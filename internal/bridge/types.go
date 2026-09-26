@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const Version = "0.1.9"
+const Version = "0.1.10"
 const Provider = "cline-pass"
 const PluginID = "clinepassbridge"
 
@@ -127,9 +127,16 @@ func credentialID(accountID, email string) string {
 	return PluginID + "-" + id()
 }
 
-// keyCredentialID 用 API key 的哈希派生稳定 ID：同一把 key 重复粘贴会覆盖同一份凭据。
-// 取哈希而不是明文，避免把 key 写进文件名。
-func keyCredentialID(apiKey string) string {
+// keyCredentialID 用账号派生稳定 ID：命名成 key-<邮箱>，一眼看出是哪个账号的 key，
+// 也让同一账号重复粘贴覆盖同一份凭据（与账号登录那套约定一致）。
+// 拿不到账号信息时退回 key 的哈希：同一把 key 仍然稳定，且文件名里不出现明文 key。
+func keyCredentialID(accountID, email, apiKey string) string {
+	if slug := slugifyAccount(email); slug != "" {
+		return PluginID + "-key-" + slug
+	}
+	if slug := slugifyAccount(accountID); slug != "" {
+		return PluginID + "-key-" + slug
+	}
 	sum := sha256.Sum256([]byte(strings.TrimSpace(apiKey)))
 	return PluginID + "-key-" + hex.EncodeToString(sum[:])[:12]
 }
