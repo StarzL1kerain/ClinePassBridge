@@ -132,6 +132,8 @@ func (s *Service) Handle(method string, raw json.RawMessage) (any, error) {
 		return map[string]any{"identifier": Provider}, nil
 	case "model.static", "model.for_auth", "model.register":
 		return s.modelRegistration(), nil
+	case "response.intercept_after":
+		return s.interceptModelsResponse(raw)
 	case "auth.parse":
 		return s.parseAuth(raw)
 	case "auth.login.start":
@@ -225,7 +227,7 @@ func (s *Service) refreshRegistrations() error {
 }
 
 func registration() any {
-	return map[string]any{"schema_version": 6, "metadata": map[string]any{"Name": "ClinePassBridge", "Version": Version, "Author": "StarzL1kerain", "GitHubRepository": "https://github.com/StarzL1kerain/ClinePassBridge", "Logo": "https://raw.githubusercontent.com/StarzL1kerain/ClinePassBridge/main/logo.png", "Description": "Cline Pass 订阅接入插件：支持账号登录与 API key、可靠的流式转发，并记录用量与实际上游", "ConfigFields": []map[string]any{{"Name": "data_dir", "Type": "string", "Description": "插件状态持久化目录"}}}, "capabilities": map[string]any{"auth_provider": true, "model_provider": true, "executor": true, "executor_model_scope": "both", "executor_input_formats": []string{"chat-completions"}, "executor_output_formats": []string{"chat-completions"}, "management_api": true, "quota_provider": true, "model_registrar": true}}
+	return map[string]any{"schema_version": 6, "metadata": map[string]any{"Name": "ClinePassBridge", "Version": Version, "Author": "StarzL1kerain", "GitHubRepository": "https://github.com/StarzL1kerain/ClinePassBridge", "Logo": "https://raw.githubusercontent.com/StarzL1kerain/ClinePassBridge/main/logo.png", "Description": "Cline Pass 订阅接入插件：支持账号登录与 API key、可靠的流式转发，并记录用量与实际上游", "ConfigFields": []map[string]any{{"Name": "data_dir", "Type": "string", "Description": "插件状态持久化目录"}}}, "capabilities": map[string]any{"auth_provider": true, "model_provider": true, "executor": true, "executor_model_scope": "both", "executor_input_formats": []string{"chat-completions"}, "executor_output_formats": []string{"chat-completions"}, "management_api": true, "quota_provider": true, "model_registrar": true, "response_interceptor": true}}
 }
 func (s *Service) modelRegistration() any {
 	cfg := s.config()

@@ -201,8 +201,24 @@ docker build --platform linux/amd64 -f Dockerfile.build --output type=local,dest
 
 ## 版本与开发记录
 
-本文档描述 **v0.1.16** 的功能集：除早先的 API key 接入、模型映射与流式转发外，
+本文档描述 **v0.1.18** 的功能集：除早先的 API key 接入、模型映射与流式转发外，
 v0.1.4 新增了**账号登录（WorkOS 设备码）**与**额度上报**，v0.1.7 吸收了上游 `v0.1.6` 里不冲突的部分。
+
+v0.1.18 **让客户端经 CPA 也能拿到模型规格**（不用改 CPA 二进制）：
+
+- 实测并读源码确认：宿主的 `/v1/models` 处理器（`sdk/api/handlers/openai/openai_handlers.go`）
+  **写死了"只保留 4 个必需字段"**（`id/object/created/owned_by`），`context_length` /
+  `max_completion_tokens` 在出口被丢掉 —— 所以客户端经 CPA 只能看到自己的默认值（例如 128K / 8.2K），
+  直连厂商时却能看到真实参数。
+- 宿主会把模型列表的响应体交给插件拦截器（`response.intercept_after`，宿主自带的测试就叫
+  `TestModelsEndpoint_ExposesResponseToPluginInterceptors_OpenAI`），于是本插件在拦截器里**补回规格**：
+  只动 `id` 属于自己的条目、只补缺失字段；其它响应（尤其是对话响应）一律原样返回。
+- **CPA 本体一行都不用改**；任何 OpenAI 兼容客户端刷新模型列表即可看到参数。
+
+v0.1.17 修掉"保存映射会覆盖自动补好的规格"：
+
+- 后端 `PUT /models` 会保留已有条目的元数据与规格（按 `upstream_id` 匹配，仅在来包缺字段时沿用旧值），
+  前端刷新后重新读取列表 —— 之前"刷新填好了、一应用又变空"就是这个覆盖。
 
 v0.1.16 **模型规格改为自动获取**（不用手填）：
 
