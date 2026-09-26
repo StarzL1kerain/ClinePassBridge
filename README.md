@@ -201,8 +201,26 @@ docker build --platform linux/amd64 -f Dockerfile.build --output type=local,dest
 
 ## 版本与开发记录
 
-本文档描述 **v0.1.20** 的功能集：除早先的 API key 接入、模型映射与流式转发外，
+**构建与部署（踩过的坑）**：宿主的插件格式是 **c-shared**，不是 Go 原生的 `plugin`：
+
+```bash
+go build -trimpath -buildmode=c-shared -ldflags="-s -w" -o clinepassbridge.so ./cmd/passbridge
+```
+
+用 `-buildmode=plugin` 编出来的 `.so` 会让宿主在加载时 panic（表现是 CPA 起来后 API 完全不响应）。
+编译用的 Go 版本最好与宿主一致（本文档按宿主 `go1.26.4` 验证，插件用 `go1.26.0` 编可正常工作）。
+部署后必须重启宿主（`systemctl --user restart cliproxyapi.service`），再在客户端重新拉一次模型列表。
+
+本文档描述 **v0.1.21** 的功能集：除早先的 API key 接入、模型映射与流式转发外，
 v0.1.4 新增了**账号登录（WorkOS 设备码）**与**额度上报**，v0.1.7 吸收了上游 `v0.1.6` 里不冲突的部分。
+
+v0.1.21 起**只注册「客户端名」一个模型条目**（映射左侧）：
+
+- 之前（v0.1.14 起）会把**上游名**也注册一份，于是"1 个模型"在客户端列表里变成 2 条
+  （例如 `deepseek-v4-pro` 与 `cline-pass/deepseek-v4-pro`）。
+- 但给模型改名正是为了区分"同一个模型来自哪个渠道"，多出来那个旧名字只会把列表弄乱。
+  现在只注册左侧名字，请求到插件后再由插件换成上游名转发（客户端不需要知道上游名）。
+- 若确实想两个名字都能用，在控制台**再加一条映射**把上游名写到左侧即可（那就等于主动开放两个名字）。
 
 v0.1.20 规格目录的拉取改用带重试的请求：
 

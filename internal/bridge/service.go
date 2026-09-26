@@ -260,14 +260,10 @@ func (s *Service) modelRegistration() any {
 			}
 			return out
 		}
+		// 只注册客户端名（映射左侧）。上游名是插件内部转发用的，不该出现在客户端的模型列表里 ——
+		// 用户给模型改名，正是为了区分"同一个模型来自哪个渠道"；再多注册一个旧名字会把列表弄乱。
+		// 若确实想同时用上游名请求，可在控制台再加一条映射，把上游名写进左侧。
 		models = append(models, entry(m.ID, m.UpstreamID, display))
-		// 上游那套名字（例如 cline-pass/deepseek-v4.1-flash）也注册一份：
-		// 宿主是按"客户端请求的模型名"去找凭据的，只注册左侧名字的话，客户端一旦直接用上游名，
-		// 宿主就会判成 no auth available（503），请求根本到不了插件。
-		// 插件自己的 resolveModel 本来就两种都认（见下），缺的只是让宿主也知道这个名字。
-		if upstream := strings.TrimSpace(m.UpstreamID); upstream != "" && upstream != m.ID {
-			models = append(models, entry(upstream, upstream, upstream))
-		}
 	}
 	return map[string]any{"Provider": Provider, "Models": models}
 }
