@@ -48,6 +48,9 @@ func (h *oauthHost) call(method string, payload, out any) error {
 		}
 		plan := h.plans[0]
 		h.plans = h.plans[1:]
+		if plan.openErr != nil {
+			return plan.openErr
+		}
 		streamID := fmt.Sprintf("oauth-upstream-%d", len(h.calls))
 		h.streams[streamID] = plan.chunks
 		*out.(*upstreamStream) = upstreamStream{StatusCode: plan.status, Headers: plan.header, StreamID: streamID}

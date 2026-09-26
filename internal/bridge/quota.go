@@ -123,17 +123,32 @@ func (s *Service) quotaCredential(storage []byte, credentialID string) (Credenti
 }
 
 // clineRequest 发出一次 Cline API GET，返回状态码与响应体。
+// 传输层失败会重试：跨网络抖动（EOF、连接重置，代理出口不稳时很常见）在上游链路上会偶发，
+// 一次失败不该让整个额度刷新失败。4xx/5xx 是确定性响应（由调用方按状态码处理），不重试。
 func (s *Service) clineRequest(callbackID, path, token string) (int, []byte, error) {
 	headers := http.Header{
 		"Accept":        []string{"application/json"},
 		"Authorization": []string{"Bearer " + token},
 	}
-	status, body, err := s.hostRequest(callbackID, http.MethodGet, s.config().BaseURL+path, headers, nil)
-	if err != nil {
-		return status, body, fail(502, "无法连接 Cline 服务："+safeError(err))
+	var lastErr error
+	for attempt := 0; attempt < clineRequestAttempts; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Duration(attempt) * clineRequestBackoff)
+		}
+		status, body, err := s.hostRequest(callbackID, http.MethodGet, s.config().BaseURL+path, headers, nil)
+		if err == nil {
+			return status, body, nil
+		}
+		lastErr = err
 	}
-	return status, body, nil
+	return 0, nil, fail(502, "无法连接 Cline 服务："+safeError(lastErr))
 }
+
+const (
+	// clineRequestAttempts/Backoff 只兜传输层抖动；退避取 300ms、600ms。
+	clineRequestAttempts = 3
+	clineRequestBackoff  = 300 * time.Millisecond
+)
 
 // decodeQuotaBody 解开 {success, data} 信封。
 // 401 会被换成可操作的提示：上游原文只说 "re-authenticate your Cline account"，

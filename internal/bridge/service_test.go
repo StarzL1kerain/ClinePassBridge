@@ -16,9 +16,10 @@ import (
 )
 
 type hostPlan struct {
-	status int
-	header http.Header
-	chunks []readChunk
+	status  int
+	header  http.Header
+	chunks  []readChunk
+	openErr error // 非空表示这次"打开上游"直接失败（模拟传输层抖动，如 EOF）
 }
 
 type fakeHost struct {
