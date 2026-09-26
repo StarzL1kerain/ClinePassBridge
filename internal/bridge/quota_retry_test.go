@@ -76,3 +76,33 @@ func TestQuotaSurfacesTransportFailureAfterRetries(t *testing.T) {
 		t.Fatalf("/users/me/plan 应尝试 %d 次，实际 %d 次（全部调用 %d 次）", clineRequestAttempts, planCalls, len(h.calls))
 	}
 }
+
+// 限流与 5xx 也值得重试（与 CommandCodeBridge 同一套规则），4xx 则立刻返回。
+func TestQuotaRetriesRateLimitAndServerErrors(t *testing.T) {
+	s := registeredService(t, "stream-aggregate")
+	credential := oauthCredential("usr-01M2W9Y7XBSS4X00YMH9NARQ4E")
+	if _, err := s.Handle("auth.parse", jsonBytes(map[string]any{
+		"Provider": Provider, "FileName": credential.ID + ".json", "RawJSON": jsonBytes(credential),
+	})); err != nil {
+		t.Fatalf("parse credential: %v", err)
+	}
+	h := newOAuthHost(
+		jsonStatusPlan(429, map[string]any{"error": "slow down"}),
+		jsonStatusPlan(503, map[string]any{"error": "upstream busy"}),
+		planResponse(),
+		usageLimitsResponse(),
+		balanceResponse(-32221),
+	)
+	s.SetHost(h.call)
+
+	result, err := s.Handle("quota.fetch", jsonBytes(map[string]any{
+		"auth_id": credential.ID, "provider": Provider, "storage_json": jsonBytes(credential),
+	}))
+	if err != nil {
+		t.Fatalf("429/503 后重试应当成功，实际：%v", err)
+	}
+	monthly := bucketByWindow(t, result, "monthly")
+	if math.Abs(monthly["remainingFraction"].(float64)-0.5) > 1e-9 {
+		t.Fatalf("monthly remainingFraction = %v, want 0.5", monthly["remainingFraction"])
+	}
+}

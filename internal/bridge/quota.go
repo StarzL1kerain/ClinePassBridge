@@ -123,29 +123,54 @@ func (s *Service) quotaCredential(storage []byte, credentialID string) (Credenti
 }
 
 // clineRequest 发出一次 Cline API GET，返回状态码与响应体。
-// 传输层失败会重试：跨网络抖动（EOF、连接重置，代理出口不稳时很常见）在上游链路上会偶发，
-// 一次失败不该让整个额度刷新失败。4xx/5xx 是确定性响应（由调用方按状态码处理），不重试。
+// 与 CommandCodeBridge 的 hostRequest 保持同一套重试规则：传输层抖动（EOF、连接重置）
+// 与 408/429/5xx 都值得重试，其余 4xx 是确定性结果（例如 key 无效）不重试。
+// 只在这里重试 GET —— 令牌换取/续期是 POST，重放有副作用，不走这条路径。
 func (s *Service) clineRequest(callbackID, path, token string) (int, []byte, error) {
 	headers := http.Header{
 		"Accept":        []string{"application/json"},
 		"Authorization": []string{"Bearer " + token},
 	}
-	var lastErr error
+	var (
+		lastStatus int
+		lastBody   []byte
+		lastErr    error
+	)
 	for attempt := 0; attempt < clineRequestAttempts; attempt++ {
-		if attempt > 0 {
-			time.Sleep(time.Duration(attempt) * clineRequestBackoff)
+		if attempt > 0 && !s.waitBeforeRetry(time.Duration(attempt)*clineRequestBackoff) {
+			break
 		}
-		status, body, err := s.hostRequest(callbackID, http.MethodGet, s.config().BaseURL+path, headers, nil)
-		if err == nil {
-			return status, body, nil
+		lastStatus, lastBody, lastErr = s.hostRequest(callbackID, http.MethodGet, s.config().BaseURL+path, headers, nil)
+		if lastErr == nil && !retryableStatus(lastStatus) {
+			return lastStatus, lastBody, nil
 		}
-		lastErr = err
 	}
-	return 0, nil, fail(502, "无法连接 Cline 服务："+safeError(lastErr))
+	if lastErr != nil {
+		return lastStatus, lastBody, fail(502, "无法连接 Cline 服务："+safeError(lastErr))
+	}
+	// 重试用尽但拿到了响应（例如 503）：按响应交给调用方，由 decodeQuotaBody 给出可读提示。
+	return lastStatus, lastBody, nil
+}
+
+// retryableStatus 与 CommandCodeBridge 同名同义：链路错误、限流与 5xx 值得重试。
+func retryableStatus(status int) bool {
+	return status == http.StatusRequestTimeout || status == http.StatusTooManyRequests || status >= 500
+}
+
+// waitBeforeRetry 等待退避间隔；插件开始关闭时立即返回 false。
+func (s *Service) waitBeforeRetry(delay time.Duration) bool {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return true
+	case <-s.stopCh:
+		return false
+	}
 }
 
 const (
-	// clineRequestAttempts/Backoff 只兜传输层抖动；退避取 300ms、600ms。
+	// clineRequestAttempts/Backoff 覆盖传输层抖动与 408/429/5xx；退避 300ms、600ms。
 	clineRequestAttempts = 3
 	clineRequestBackoff  = 300 * time.Millisecond
 )
