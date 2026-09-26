@@ -61,7 +61,7 @@ ClinePassBridge 是 [CLIProxyAPI (CPA)](https://github.com/router-for-me/CLIProx
 1. **不依赖面板**：直接 `GET /v0/management/clinepassbridge/quota`，或打开控制台页面查看。
 2. **让面板显示**：给管理面板套用**插件额度补丁**（加一个通用适配器去接宿主的 `/quota/fetch`），
    卡片上即出现「点击此处刷新额度」，配额管理页多出「插件」分组。
-   补丁与完整步骤见 **PanelPluginQuota** 仓库：<https://github.com/StarzL1kerain/PanelPluginQuota>
+   补丁与完整步骤见 **CPA-Panel-PluginQuota** 仓库：<https://github.com/StarzL1kerain/CPA-Panel-PluginQuota>
    （含源码补丁、构建好的 `management.html`（可直接部署，无需 Node）、部署脚本与排错说明）。
 
 > 补丁**只改面板那个 `management.html` 静态文件，不涉及 CPA 本体**；不打它插件依然可用，只是面板上看不到额度。
