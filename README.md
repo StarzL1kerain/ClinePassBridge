@@ -12,7 +12,7 @@ ClinePassBridge 是 [CLIProxyAPI (CPA)](https://github.com/router-for-me/CLIProx
 
 ## 功能
 
-- 支持两种凭据：**Cline Pass 账号登录**和 **API key**。账号登录走 WorkOS 设备码流程（与 Cline CLI 的 `cline auth` 同一条链路），在 CPA 的凭据管理里发起登录后打开页面给出的链接完成授权即可，插件自行换取并续期令牌；API key 仍可在插件管理页导入。
+- 支持两种凭据：**API key（推荐）**和 **Cline Pass 账号登录**。**一把 API key 就够** —— 实测它能读 `/users/me`、`/users/me/plan`、`/users/me/plan/usage-limits`，因此**模型请求与额度都走它**，订阅令牌完全不参与（不存在"拿订阅账号反代"的顾虑）。账号登录走 WorkOS 设备码流程（与 Cline CLI 的 `cline auth` 同一条链路），插件自行换取并续期令牌，适合只有订阅、暂时拿不到 API key 的情况。
 - 凭据交给 CPA 的 `auth-dir` 保存；插件状态目录不保存凭据。
 - 通过 CPA 的额度能力展示 Cline Pass 的套餐、余额与三个滚动窗口的额度上限（**管理面板需支持插件额度**，官方版尚未支持，见下方「额度」一节），也可用插件自带的 `GET /v0/management/clinepassbridge/quota` 直接查看。
 - 将客户端模型名映射为指定上游 ID，用户填写的两个名称均原样保存；默认别名 `deepseek-flash` 指向 `cline-pass/deepseek-v4.1-flash`，可在管理页维护其他映射。
@@ -26,7 +26,22 @@ ClinePassBridge 是 [CLIProxyAPI (CPA)](https://github.com/router-for-me/CLIProx
 
 ## 凭据
 
-两种凭据在请求时都表示为一个 `Authorization: Bearer` 值，因此模型、流式转发与日志行为完全一致，区别只在获取与续期方式：
+**推荐直接用 API key** —— 它一个就覆盖模型请求与额度查询，且不参与订阅令牌那条链路：
+
+1. 去 [app.cline.bot](https://app.cline.bot) → **Settings → API Keys** 建一把。
+   **创建后立刻复制完整值**：Cline 只在创建那一刻完整显示一次，之后页面上只剩掩码值。
+2. 插件控制台「添加凭据」→ 选 **API key** 模式粘贴。
+
+导入时会先用这把 key 打一次 `GET /users/me` 做校验：被上游拒绝（401/403，例如粘到的是掩码值）
+**当场报错拒收**，不会存成一条"看似正常、其实永远 401"的凭据。校验通过还会读回账号邮箱，
+凭据因此命名成 **`clinepassbridge-key-<邮箱>`**，一眼看出是哪个账号的 key；
+同一账号的不同 key 会覆盖同一份凭据（重复粘贴不再新增）。
+
+> **不要两种凭据都留着。** 宿主会在同一供应商的凭据之间调度，两份都在时模型请求可能被分到
+> 账号登录那份上去 —— 那就又变成"用订阅令牌发请求"了。**只用 API key** 或**只用账号登录**，二选一。
+
+两种凭据在请求时都表示为一个 `Authorization: Bearer` 值，因此模型、流式转发与日志行为完全一致，
+区别只在获取与续期方式：
 
 - **API key**：长期静态凭据，插件不续期，`NextRefreshAfter` 固定为一年后。
 - **账号登录**：access token 是有效期约一小时的 JWT，refresh token 长期有效。插件在请求前若发现令牌进入 5 分钟续期窗口会先行续期，同时把续期时间交给 CPA，由宿主按需调用 `auth.refresh`。续期失败不会中断请求，真实失败会以上游错误记入请求日志。
@@ -35,13 +50,19 @@ ClinePassBridge 是 [CLIProxyAPI (CPA)](https://github.com/router-for-me/CLIProx
 
 ## 额度
 
-额度来自三个只读元数据接口，均以同一枚令牌访问，实测只需三次请求：
+额度来自三个只读元数据接口，均以同一枚凭据访问（**API key 与账号令牌都行**，实测 API key 能读全部三个），实测只需三次请求：
 
 | 接口 | 用途 |
 |---|---|
 | `/users/me/plan` | 套餐名、当前周期、三个滚动窗口的上限 |
 | `/users/me/plan/usage-limits` | 三个窗口的 `percentUsed` 与 `resetsAt`（已用比例由上游直接给出） |
 | `/users/{id}/balance` | 余额 |
+
+其中 `/users/me/plan` 只提供套餐名、窗口上限与当前周期：某些凭据读不到它时，插件只是少报这几项，
+**三个窗口照常显示**并记一条日志，不会让整个额度查询失败。
+
+额度与校验请求对传输层抖动（`EOF`、连接重置）以及 408 / 429 / 5xx **自动重试 3 次**
+（退避 300ms / 600ms），其余 4xx 立即返回 —— 与 CommandCodeBridge 同一套规则。
 
 两个金额单位不同，均已实测确认：`balance` 的单位是 **1e-6 美元**（网页端把 `-32221` 显示为 `Credits: -0.0322`），`costUsd` 与 `inferenceCapThreshold` 的单位是 **1e-8 美元**（三个窗口上限换算后为 10 / 25 / 50 美元）。
 
